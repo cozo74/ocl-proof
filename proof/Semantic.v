@@ -108,6 +108,14 @@ Inductive step : obj_model -> env -> tm -> tm -> Prop :=
         step M E (CArithUn URound (CReal r)) ( CInt z)
 
 
+      | E_StrUnUToUpper :
+        forall M E s,
+        step M E (CStrUn UToUpper (CString s)) ( CString (toUpper s) )
+
+      | E_StrUnUToLower :
+        forall M E s,
+        step M E (CStrUn UToLower (CString s)) ( CString (toLower s) )
+
 
 
 
