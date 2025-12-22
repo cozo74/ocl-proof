@@ -43,3 +43,29 @@ Definition toUpper (s : string) : string :=
 
 Definition toLower (s : string) : string :=
   map_string toLower_char s.
+
+
+
+
+Definition Rleb (x y : R) : bool :=
+if Rle_dec x y then true else false.
+
+Definition Rltb (x y : R) : bool :=
+if Rlt_dec x y then true else false.
+
+
+Definition Rge_dec (x y : R) := Rle_dec y x.
+Definition Rgt_dec (x y : R) := Rlt_dec y x.
+
+Definition Rgeb (x y : R) : bool :=
+  if Rge_dec x y then true else false.
+
+Definition Rgtb (x y : R) : bool :=
+  if Rgt_dec x y then true else false.
+
+Definition Reqb (x y : R) : bool :=
+  if Req_EM_T x y then true else false.
+
+Definition Rneqb (x y : R) : bool :=
+  if Req_EM_T x y then false else true.
+

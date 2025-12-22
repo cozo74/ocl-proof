@@ -118,6 +118,40 @@ Inductive step : obj_model -> env -> tm -> tm -> Prop :=
 
 
 
+      | E_BoolBinBAnd : 
+        forall M E a b,
+        step M E (CBoolBin BAnd (CBool a) (CBool b)) (CBool (andb a b) ) 
+
+      | E_BoolBinBOr : 
+        forall M E a b,
+        step M E (CBoolBin BOr (CBool a) (CBool b)) (CBool (orb a b) ) 
+
+      | E_BoolBinBXor : 
+        forall M E a b,
+        step M E (CBoolBin BXor (CBool a) (CBool b)) (CBool (xorb a b) ) 
+
+      | E_BoolBinBImplies : 
+        forall M E a b,
+        step M E (CBoolBin BImplies (CBool a) (CBool b)) (CBool (orb (negb a) b) ) 
+
+
+
+      | E_CompBinBEq :
+        forall M E a b,
+        step M E (CCompBin BEq (CInt a) (CInt b)) (CBool (a =? b)%Z)
+
+
+      | E_CompBinBEq1 :
+        forall M E a b,
+        step M E (CCompBin BEq (CInt a) (CReal b)) (CBool (Reqb (IZR a) (b)) )
+
+      | E_CompBinBEq2 :
+        forall M E a b,
+        step M E (CCompBin BEq (CReal a) (CReal b)) (CBool (Reqb a b))
+
+
+
+
 
       with E_Forall :
             obj_model -> env -> string -> tm ->
