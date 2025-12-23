@@ -11,6 +11,7 @@ Import ListNotations.
 Definition var  := string.
 Definition attr := string.
 Definition role := string.
+Definition nrole := string.
 Definition class := string.
 
 (* 一元运算 *)
@@ -80,7 +81,7 @@ Inductive tm : Type :=
 (*  对象 / 属性 / 角色  *)
 | CAttr   : tm -> attr -> tm
 | CRole   : tm -> role -> tm
-| CNRole   : tm -> role -> tm
+| CNRole   : tm -> nrole -> tm
 
 
 (*  集合（Bag） *)
@@ -114,6 +115,7 @@ Inductive tm : Type :=
 | COne      : tm -> var -> tm -> tm
 | CCollect  : tm -> attr -> tm
 | CRCollect  : tm -> role -> tm
+| CNRCollect : tm -> nrole -> tm
 
 
 (*  聚合  *)
