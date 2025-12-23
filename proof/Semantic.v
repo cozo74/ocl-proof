@@ -48,6 +48,244 @@ Definition env := total_map value.     (* var name -> valu *)
 
 
 
+Definition bool_unop_sem (op : bool_unop) (v : value) : option value :=
+  match op, v with
+  | UNot, V_Bool b => Some (V_Bool (negb b))
+  | _, _ => None
+  end.
+
+
+Definition arith_unop_sem (op : arith_unop) (v : value) : option value :=
+  match op, v with
+  | UNeg,   V_Int n  => Some (V_Int (-n))
+  | UAbs,   V_Int n  => Some (V_Int (Z.abs n))
+
+  | UNeg,   V_Real r => Some (V_Real (-r))
+  | UAbs,   V_Real r => Some (V_Real (Rabs r))
+
+  | _, _ => None
+  end.
+
+
+Definition str_unop_sem (op : str_unop) (v : value) : option value :=
+  match op, v with
+  | UToUpper, V_String s => Some (V_String (toUpper s))
+  | UToLower, V_String s => Some (V_String (toLower s))
+  | _, _ => None
+  end.
+
+
+
+Definition bool_binop_sem (op : bool_binop) (b1 b2 : bool) : bool :=
+  match op with
+  | BAnd      => andb b1 b2
+  | BOr       => orb b1 b2
+  | BXor      => xorb b1 b2
+  | BImplies  => orb (negb b1) b2
+  end.
+
+
+
+Definition comp_eq_sem (v1 v2 : value) : option bool :=
+  match v1, v2 with
+  | V_Int a, V_Int b        => Some (a =? b)%Z
+  | V_Int a, V_Real b      => Some (Reqb (IZR a) b)
+  | V_Real a, V_Int b      => Some (Reqb a (IZR b))
+  | V_Real a, V_Real b     => Some (Reqb a b)
+  | V_String a, V_String b => Some (String.eqb a b)
+  | V_Object a, V_Object b => Some (String.eqb a b)
+  | _, _ => None
+  end.
+
+
+Definition comp_lt_sem (v1 v2 : value) : option bool :=
+  match v1, v2 with
+  | V_Int a, V_Int b    => Some (a <? b)%Z
+  | V_Int a, V_Real b  => Some (Rltb (IZR a) b)
+  | V_Real a, V_Int b  => Some (Rltb a (IZR b))
+  | V_Real a, V_Real b => Some (Rltb a b)
+  | _, _ => None
+  end.
+
+Definition comp_le_sem (v1 v2 : value) : option bool :=
+  match v1, v2 with
+  | V_Int a, V_Int b    => Some (a <=? b)%Z
+  | V_Int a, V_Real b  => Some (Rleb (IZR a) b)
+  | V_Real a, V_Int b  => Some (Rleb a (IZR b))
+  | V_Real a, V_Real b => Some (Rleb a b)
+  | _, _ => None
+  end.
+
+
+Definition comp_binop_sem
+  (op : comp_binop) (v1 v2 : value) : option bool :=
+  match op with
+  | BEq => comp_eq_sem v1 v2
+  | BNe => option_map negb (comp_eq_sem v1 v2)
+  | BLt => comp_lt_sem v1 v2
+  | BLe => comp_le_sem v1 v2
+  | BGt => option_map negb (comp_le_sem v1 v2)
+  | BGe => option_map negb (comp_lt_sem v1 v2)
+  end.
+
+
+
+Definition arith_binop_sem
+  (op : arith_binop) (v1 v2 : value) : option value :=
+  match op, v1, v2 with
+  | BAdd, V_Int a, V_Int b =>
+      Some (V_Int (a + b)%Z)
+
+  | BAdd, V_Int a, V_Real b =>
+      Some (V_Real (IZR a + b))
+
+  | BAdd, V_Real a, V_Int b =>
+      Some (V_Real (a + IZR b))
+
+  | BAdd, V_Real a, V_Real b =>
+      Some (V_Real (a + b))
+
+  | BSub, V_Int a, V_Int b =>
+      Some (V_Int (a - b)%Z)
+
+  | BSub, V_Int a, V_Real b =>
+      Some (V_Real (IZR a - b))
+
+  | BSub, V_Real a, V_Int b =>
+      Some (V_Real (a - IZR b))
+
+  | BSub, V_Real a, V_Real b =>
+      Some (V_Real (a - b))
+
+  | BMul, V_Int a, V_Int b =>
+      Some (V_Int (a * b)%Z)
+
+  | BMul, V_Int a, V_Real b =>
+      Some (V_Real (IZR a * b))
+
+  | BMul, V_Real a, V_Int b =>
+      Some (V_Real (a * IZR b))
+
+  | BMul, V_Real a, V_Real b =>
+      Some (V_Real (a * b))
+
+  | BDiv, V_Int a, V_Int b =>
+      if Z.eqb b 0 then None
+      else Some (V_Real (IZR a / IZR b))
+
+  | BDiv, V_Int a, V_Real b =>
+      if Reqb b 0 then None
+      else Some (V_Real (IZR a / b))
+
+  | BDiv, V_Real a, V_Int b =>
+      if Z.eqb b 0 then None
+      else Some (V_Real (a / IZR b))
+
+  | BDiv, V_Real a, V_Real b =>
+      if Reqb b 0 then None
+      else Some (V_Real (a / b))
+
+  | _, _, _ => None
+  end.
+
+
+Definition str_binop_sem
+  (op : str_binop) (v1 v2 : value) : option value :=
+  match op, v1, v2 with
+  | BConcat, V_String a, V_String b =>
+      Some (V_String (a ++ b))
+  | _, _, _ => None
+  end.
+
+
+Definition agg_binop_sem
+  (op : agg_binop) (v1 v2 : value) : option value :=
+  match op, v1, v2 with
+  | BMax, V_Int a, V_Int b =>
+      Some (V_Int (Z.max a b))
+
+  | BMax, V_Real a, V_Real b =>
+      Some (V_Real (Rmax a b))
+
+  | BMin, V_Int a, V_Int b =>
+      Some (V_Int (Z.min a b))
+
+  | BMin, V_Real a, V_Real b =>
+      Some (V_Real (Rmin a b))
+
+  | BMod, V_Int a, V_Int b =>
+      if Z.eqb b 0 then None
+      else Some (V_Int (Z.modulo a b))
+
+  | BDivInt, V_Int a, V_Int b =>
+      if Z.eqb b 0 then None
+      else Some (V_Int (a / b)%Z)
+
+  | _, _, _ => None
+  end.
+
+
+
+
+
+Definition value_eqb (v1 v2 : value) : bool :=
+  match v1, v2 with
+  | V_Bool b1,   V_Bool b2   => Bool.eqb b1 b2
+  | V_Int z1,    V_Int z2    => Z.eqb z1 z2
+  | V_String s1, V_String s2 => String.eqb s1 s2
+  | V_Object o1, V_Object o2 => String.eqb o1 o2
+  (*| V_Bag xs,    V_Bag ys    =>
+      list_value_eqb xs ys   (* 可选，见下 *) *)
+  | _, _ => false
+  end.
+
+
+Definition bag_union (xs ys : list value) : list value :=
+  xs ++ ys.
+
+Definition bag_intersect (xs ys : list value) : list value :=
+  filter (fun x => existsb (value_eqb x) ys) xs.
+
+Definition bag_difference (xs ys : list value) : list value :=
+  filter (fun x => negb (existsb (value_eqb x) ys)) xs.
+
+Definition bag_symdiff (xs ys : list value) : list value :=
+  bag_union (bag_difference xs ys) (bag_difference ys xs).
+
+
+
+
+Definition bag_includes (xs ys : list value) : bool :=
+  existsb (fun x => existsb (value_eqb x) xs) ys.
+
+
+Definition bag_includes_all (xs ys : list value) : bool :=
+  forallb (fun y => existsb (value_eqb y) xs) ys.
+
+
+
+Definition bag_excludes (xs ys : list value) : bool :=
+  negb (bag_includes xs ys).
+
+Definition bag_excludes_all (xs ys : list value) : bool :=
+  forallb (fun y => negb (existsb (value_eqb y) xs)) ys.
+
+Definition bag_is_empty (xs : list value) : bool :=
+  match xs with
+  | [] => true
+  | _  => false
+  end.
+
+Definition bag_not_empty (xs : list value) : bool :=
+  negb (bag_is_empty xs).
+
+Fixpoint bag_is_unique (xs : list value) : bool :=
+  match xs with
+  | [] => true
+  | x :: xs' =>
+      negb (existsb (value_eqb x) xs')
+      && bag_is_unique xs'
+  end.
 
 
 Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
@@ -55,313 +293,243 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
   (* context C inv body 语义：对所有实例执行 forAll *)
       | E_CContext :
           forall M E C body v,
-          ceval M E (CForAll (CAllInstances C) "self" body) v ->
-          ceval M E (CContext C body) v
+            ceval M E (CForAll (CAllInstances C) "self" body) v ->
+            ceval M E (CContext C body) v
       
-(*       
+
 
   (* Var Self *)
-      | E_Var :
+      | E_CVar :
           forall M E var,
-          ceval M E (CVar var) (E var)
+            ceval M E (CVar var) (E var)
 
-      | E_Self :
+      | E_CSelf :
           forall M E,
           ceval M E CSelf (E "self")
 
+  (*  字面量  *)
+
+      | E_CBool :
+          forall M E b,
+            ceval M E (CBool b) (V_Bool b)
+
+      | E_CInt :
+          forall M E n,
+            ceval M E (CInt n) (V_Int n)
+
+      | E_CReal :
+          forall M E r,
+            ceval M E (CReal r) (V_Real r)
+
+      | E_CString :
+          forall M E s,
+            ceval M E (CString s) (V_String s)
+
+      | E_CObject :
+          forall M E oid,
+            ceval M E (CObject oid) (V_Object oid)
+
+
+
+
   (* 一元运算 *)
-      
-      | E_BoolUnUNotTru :
-        forall M E,
-        ceval M E (CBoolUn UNot (CBool true)) (CBool false )
 
 
-      | E_BoolUnUNotFls :
-        forall M E,
-        ceval M E (CBoolUn UNot (CBool false)) (CBool true)
+      | E_CBoolUn :
+          forall M E op t v v',
+            ceval M E t v ->
+            bool_unop_sem op v = Some v' ->
+            ceval M E (CBoolUn op t) v'
 
 
-      | E_ArithUnIntUNeg :
-        forall M E n,
-        ceval M E (CArithUn UNeg (CInt n)) ( CInt (-n))
 
-      | E_ArithUnIntUAbs :
-        forall M E n,
-        ceval M E (CArithUn UAbs (CInt n)) ( CInt (Z.abs n))
+      | E_CArithUn :
+          forall M E op t v v',
+            ceval M E t v ->
+            arith_unop_sem op v = Some v' ->
+            ceval M E (CArithUn op t) v'
 
+      | E_CArithUnRealUFloor :
+        forall M E t r z,
+          ceval M E t (V_Real r) ->
+          Rfloor_real r z ->
+          ceval M E (CArithUn UFloor t) (V_Int z)
 
-      | E_ArithUnRealUNeg :
-        forall M E r,
-        ceval M E (CArithUn UNeg (CReal r)) ( CReal (-r))
-
-      | E_ArithUnRealUAbs :
-        forall M E r,
-        ceval M E (CArithUn UAbs (CReal r)) ( CReal (Rabs r))
-
-      | E_ArithUnRealUFloor :
-        forall M E r z,
-        Rfloor_real r z ->
-        ceval M E (CArithUn UFloor (CReal r)) ( CInt z)
-
-      | E_ArithUnRealURound :
-        forall M E r z,
-        Rround_real r z ->
-        ceval M E (CArithUn URound (CReal r)) ( CInt z)
+      | E_CArithUnRealURound :
+        forall M E t r z,
+          ceval M E t (V_Real r) ->
+          Rround_real r z ->
+          ceval M E (CArithUn URound t) (V_Int z)
 
 
-      | E_StrUnUToUpper :
-        forall M E s,
-        ceval M E (CStrUn UToUpper (CString s)) ( CString (toUpper s) )
 
-      | E_StrUnUToLower :
-        forall M E s,
-        ceval M E (CStrUn UToLower (CString s)) ( CString (toLower s) )
+
+      | E_CStrUn :
+          forall M E op t v v',
+            ceval M E t v ->
+            str_unop_sem op v = Some v' ->
+            ceval M E (CStrUn op t) v'
+
+
+
 
   (* 二元运算 *)
 
     (* 二元逻辑运算 *)
-      | E_BoolBinBAnd : 
-        forall M E a b,
-        ceval M E (CBoolBin BAnd (CBool a) (CBool b)) (CBool (andb a b) ) 
 
-      | E_BoolBinBOr : 
-        forall M E a b,
-        ceval M E (CBoolBin BOr (CBool a) (CBool b)) (CBool (orb a b) ) 
+      | E_CBoolBin :
+          forall M E op t1 t2 b1 b2,
+            ceval M E t1 (V_Bool b1) ->
+            ceval M E t2 (V_Bool b2) ->
+            ceval M E (CBoolBin op t1 t2) (V_Bool (bool_binop_sem op b1 b2))
 
-      | E_BoolBinBXor : 
-        forall M E a b,
-        ceval M E (CBoolBin BXor (CBool a) (CBool b)) (CBool (xorb a b) ) 
-
-      | E_BoolBinBImplies : 
-        forall M E a b,
-        ceval M E (CBoolBin BImplies (CBool a) (CBool b)) (CBool (orb (negb a) b) ) 
 
     (* 二元比较运算 *)
 
-      | E_CompBinBEq :
-        forall M E a b,
-        ceval M E (CCompBin BEq (CInt a) (CInt b)) (CBool (a =? b)%Z)
-
-
-      | E_CompBinBEq1 :
-        forall M E a b,
-        ceval M E (CCompBin BEq (CInt a) (CReal b)) (CBool (Reqb (IZR a) (b)) )
-
-      | E_CompBinBEq2 :
-        forall M E a b,
-        ceval M E (CCompBin BEq (CReal a) (CReal b)) (CBool (Reqb a b) )
-
-      | E_CompBinBEq3 :
-        forall M E a b,
-        ceval M E (CCompBin BEq (CString a) (CString b)) (CBool (String.eqb a b) )
-
-      | E_CompBinBEq4 :
-        forall M E a b,
-        ceval M E (CCompBin BEq (CObject a) (CObject b)) (CBool (String.eqb a b) )
-
-
-
-
-      | E_CompBinBNe :
-        forall M E a b,
-        ceval M E (CCompBin BNe (CInt a) (CInt b)) (CBool (negb (a =? b)%Z))
-
-
-      | E_CompBinBNe1 :
-        forall M E a b,
-        ceval M E (CCompBin BNe (CInt a) (CReal b)) (CBool (Rneqb (IZR a) (b)) )
-
-      | E_CompBinBNe2 :
-        forall M E a b,
-        ceval M E (CCompBin BNe (CReal a) (CReal b)) (CBool (Rneqb a b) )
-
-
-      | E_CompBinBNe3 :
-        forall M E a b,
-        ceval M E (CCompBin BEq (CString a) (CString b)) (CBool (negb (String.eqb a b)) )
-
-
-
-      | E_CompBinBNe4 :
-        forall M E a b,
-        ceval M E (CCompBin BEq (CObject a) (CObject b)) (CBool (negb (String.eqb a b)) )
-
-
-
-
-      | E_CompBinBLt :
-        forall M E a b,
-        ceval M E (CCompBin BLt (CInt a) (CInt b)) (CBool (a <? b)%Z)
-
-
-      | E_CompBinBLt1 :
-        forall M E a b,
-        ceval M E (CCompBin BLt (CInt a) (CReal b)) (CBool (Rltb (IZR a) (b)) )
-
-      | E_CompBinBLt2 :
-        forall M E a b,
-        ceval M E (CCompBin BLt (CReal a) (CReal b)) (CBool (Rltb a b) )
-
-      | E_CompBinBLe :
-        forall M E a b,
-        ceval M E (CCompBin BLe (CInt a) (CInt b)) (CBool (a <=? b)%Z)
-
-
-      | E_CompBinBLe1 :
-        forall M E a b,
-        ceval M E (CCompBin BLe (CInt a) (CReal b)) (CBool (Rleb (IZR a) (b)) )
-
-      | E_CompBinBLe2 :
-        forall M E a b,
-        ceval M E (CCompBin BLe (CReal a) (CReal b)) (CBool (Rleb a b) )
-
-
-      | E_CompBinBGt :
-        forall M E a b,
-        ceval M E (CCompBin BGt (CInt a) (CInt b)) (CBool (a >? b)%Z)
-
-
-      | E_CompBinBGt1 :
-        forall M E a b,
-        ceval M E (CCompBin BGt (CInt a) (CReal b)) (CBool (Rgtb (IZR a) (b)) )
-
-      | E_CompBinBGt2 :
-        forall M E a b,
-        ceval M E (CCompBin BGt (CReal a) (CReal b)) (CBool (Rgtb a b) )
-
-
-      | E_CompBinBGe :
-        forall M E a b,
-        ceval M E (CCompBin BGe (CInt a) (CInt b)) (CBool (a >=? b)%Z)
-
-
-      | E_CompBinBGe1 :
-        forall M E a b,
-        ceval M E (CCompBin BGe (CInt a) (CReal b)) (CBool (Rgeb (IZR a) (b)) )
-
-      | E_CompBinBGe2 :
-        forall M E a b,
-        ceval M E (CCompBin BGe (CReal a) (CReal b)) (CBool (Rgeb a b) )
+      | E_CCompBin :
+          forall M E op t1 t2 v1 v2 b,
+            ceval M E t1 v1 ->
+            ceval M E t2 v2 ->
+            comp_binop_sem op v1 v2 = Some b ->
+            ceval M E (CCompBin op t1 t2) (V_Bool b)
 
 
     (* 二元算数运算 *)
 
-      | E_ArithBinBAdd :
-        forall M E a b,
-        ceval M E (CArithBin BAdd (CInt a) (CInt b)) (CInt (a + b)%Z)
-
-      | E_ArithBinBAdd1 :
-        forall M E a b,
-        ceval M E (CArithBin BAdd (CInt a) (CReal b)) (CReal (IZR a + b)%R)
-
-      | E_ArithBinBAdd2 :
-        forall M E a b,
-        ceval M E (CArithBin BAdd (CReal a) (CReal b)) (CReal (a + b)%R)
+      | E_CArithBin :
+          forall M E op t1 t2 v1 v2 v,
+            ceval M E t1 v1 ->
+            ceval M E t2 v2 ->
+            arith_binop_sem op v1 v2 = Some v ->
+            ceval M E (CArithBin op t1 t2) v
 
 
-      | E_ArithBinBSub :
-        forall M E a b,
-        ceval M E (CArithBin BSub (CInt a) (CInt b)) (CInt (a - b)%Z)
-
-      | E_ArithBinBSub1 :
-        forall M E a b,
-        ceval M E (CArithBin BSub (CInt a) (CReal b)) (CReal (IZR a - b)%R)
-
-      | E_ArithBinBSub2 :
-        forall M E a b,
-        ceval M E (CArithBin BSub (CReal a) (CReal b)) (CReal (a - b)%R)
-
-
-      | E_ArithBinBMul :
-        forall M E a b,
-        ceval M E (CArithBin BMul (CInt a) (CInt b)) (CInt (a * b)%Z)
-
-      | E_ArithBinBMul1 :
-        forall M E a b,
-        ceval M E (CArithBin BMul (CInt a) (CReal b)) (CReal (IZR a * b)%R)
-
-      | E_ArithBinBMul2 :
-        forall M E a b,
-        ceval M E (CArithBin BMul (CReal a) (CReal b)) (CReal (a * b)%R)
-
-
-      | E_ArithBinBDiv :
-        forall M E a b,
-        ceval M E (CArithBin BDiv (CInt a) (CInt b)) (CReal ((IZR a) / (IZR b))%R)
-
-      | E_ArithBinBDiv1 :
-        forall M E a b,
-        ceval M E (CArithBin BDiv (CInt a) (CReal b)) (CReal (IZR a / b)%R)
-
-      | E_ArithBinBDiv2 :
-        forall M E a b,
-        ceval M E (CArithBin BDiv (CReal a) (CReal b)) (CReal (a / b)%R)
 
     (* 二元字符串运算 *)
 
-      | E_StrBinBConcat :
-        forall M E a b,
-        ceval M E (CStrBin BConcat (CString a) (CString b)) (CString (a ++ b))
+      | E_CStrBin :
+          forall M E op t1 t2 v1 v2 v,
+            ceval M E t1 v1 ->
+            ceval M E t2 v2 ->
+            str_binop_sem op v1 v2 = Some v ->
+            ceval M E (CStrBin op t1 t2) v
 
     (* 二元聚合运算 *)
 
-      | E_AggBinAggBMax :
-        forall M E a b,
-        ceval M E (CAggBin BMax (CInt a) (CInt b)) (CInt (Z.max a b))
-
-      | E_AggBinAggBMax1 :
-        forall M E a b,
-        ceval M E (CAggBin BMax (CReal a) (CReal b)) (CReal (Rmax a b))
-
-      | E_AggBinAggMin :
-        forall M E a b,
-        ceval M E (CAggBin BMin (CInt a) (CInt b)) (CInt (Z.min a b))
-
-      | E_AggBinAggMin1 :
-        forall M E a b,
-        ceval M E (CAggBin BMin (CReal a) (CReal b)) (CReal (Rmin a b))
-
-
-      | E_AggBinAggBMod :
-        forall M E a b,
-        ceval M E (CAggBin BMod (CInt a) (CInt b)) (CInt (Z.modulo a b))
-
-
-      | E_AggBinAggBDivInt :
-        forall M E a b,
-        ceval M E (CAggBin BDivInt (CInt a) (CInt b)) (CInt (a / b)%Z)
+      | E_CAggBin :
+          forall M E op t1 t2 v1 v2 v,
+            ceval M E t1 v1 ->
+            ceval M E t2 v2 ->
+            agg_binop_sem op v1 v2 = Some v ->
+            ceval M E (CAggBin op t1 t2) v
 
 
   (*  对象 / 属性 / 角色  *)
 
-      | E_Attr :
-        forall M E oid attr,
-        ceval M E (CAttr (CObject oid) attr) ((attrs ((objects M) oid)) attr)
+      | E_CAttr :
+          forall M E t oid attr v,
+            ceval M E t (V_Object oid) ->
+            attrs (objects M oid) attr = v ->
+            ceval M E (CAttr t attr) v
 
-      | E_Role :
-        forall M E oid role,
-        ceval M E (CRole (CObject oid) role) (CObject ((roles ((objects M) oid)) role) )
 
-      | E_NRole :
-        forall M E oid nrole,
-        ceval M E (CNRole (CObject oid) nrole) (CBagLiteral ((nroles ((objects M) oid)) nrole) )
+      | E_CRole :
+          forall M E t oid role r_oid,
+            ceval M E t (V_Object oid) ->
+            roles (objects M oid) role = r_oid ->
+            ceval M E (CRole t role) (V_Object r_oid)
 
+
+      | E_CNRole :
+          forall M E t oid nrole oids,
+            ceval M E t (V_Object oid) ->
+            nroles (objects M oid) nrole = oids ->
+            ceval M E (CNRole t nrole)
+                  (V_Bag (map V_Object oids))
 
 
   (*  集合（Bag） *)
 
+      | E_CEmptyBag :
+          forall M E T,
+            ceval M E (CEmptyBag T) (V_Bag [])
+
+      | E_CBagLiteral :
+          forall M E ts vs,
+            E_BagLiteral M E ts vs ->
+            ceval M E (CBagLiteral ts) (V_Bag vs)
 
 
   (*  allInstances  *)
 
-      | E_AllInstances :
-        forall M E cname,
-        ceval M E (CAllInstances cname) (CBagLiteral ((cmap M) cname) )
+      | E_CAllInstances :
+          forall M E C oids,
+            cmap M C = oids ->
+            ceval M E (CAllInstances C) (V_Bag (map V_Object oids))
 
-
+        
   (*  Bag 运算  *)
-       *)
 
+      | E_CUnion :
+          forall M E t1 t2 xs ys,
+            ceval M E t1 (V_Bag xs) ->
+            ceval M E t2 (V_Bag ys) ->
+            ceval M E (CUnion t1 t2) (V_Bag (bag_union xs ys))
+
+      | E_CIntersect :
+          forall M E t1 t2 xs ys,
+            ceval M E t1 (V_Bag xs) ->
+            ceval M E t2 (V_Bag ys) ->
+            ceval M E (CIntersect t1 t2) (V_Bag (bag_intersect xs ys))
+
+      | E_CDifference :
+        forall M E t1 t2 xs ys,
+          ceval M E t1 (V_Bag xs) ->
+          ceval M E t2 (V_Bag ys) ->
+          ceval M E (CDifference t1 t2) (V_Bag (bag_difference xs ys))
+
+      | E_CSymDiff :
+          forall M E t1 t2 xs ys,
+            ceval M E t1 (V_Bag xs) ->
+            ceval M E t2 (V_Bag ys) ->
+            ceval M E (CSymDiff t1 t2) (V_Bag (bag_symdiff xs ys))
+
+  (*  Bag 谓词  *)
+
+      | E_CIncludes :
+          forall M E t1 t2 xs ys,
+            ceval M E t1 (V_Bag xs) ->
+            ceval M E t2 (V_Bag ys) ->
+            ceval M E (CIncludes t1 t2) (V_Bool (bag_includes xs ys))
+
+      | E_CIncludesAll :
+          forall M E t1 t2 xs ys,
+            ceval M E t1 (V_Bag xs) ->
+            ceval M E t2 (V_Bag ys) ->
+            ceval M E (CIncludesAll t1 t2) (V_Bool (bag_includes_all xs ys))
+
+
+      | E_CExcludes :
+          forall M E t1 t2 xs ys,
+            ceval M E t1 (V_Bag xs) ->
+            ceval M E t2 (V_Bag ys) ->
+            ceval M E (CExcludes t1 t2) (V_Bool (bag_excludes xs ys))
+
+      | E_CExcludesAll :
+          forall M E t1 t2 xs ys,
+            ceval M E t1 (V_Bag xs) ->
+            ceval M E t2 (V_Bag ys) ->
+            ceval M E (CExcludesAll t1 t2) (V_Bool (bag_excludes_all xs ys))
+
+      | E_CIsEmpty :
+          forall M E t xs,
+            ceval M E t (V_Bag xs) ->
+            ceval M E (CIsEmpty t) (V_Bool (bag_is_empty xs))
+
+      | E_CNotEmpty :
+          forall M E t xs,
+            ceval M E t (V_Bag xs) ->
+            ceval M E (CNotEmpty t) (V_Bool (bag_not_empty xs))
 
 
   (*  Iterator（绑定变量！）, forall，exists中的varList是语法糖，可脱糖为单变量表示 *)
@@ -425,7 +593,19 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
               E_NRCollect M E nrole vs vs' ->
               ceval M E (CNRCollect bag_tm nrole) (V_Bag vs')
 
-              
+
+
+      with E_BagLiteral :
+            obj_model -> env -> list tm -> list value -> Prop :=
+        | E_BagLitNil :
+            forall M E,
+              E_BagLiteral M E [] []
+
+        | E_BagLitCons :
+            forall M E t tl v vl,
+              ceval M E t v ->
+              E_BagLiteral M E tl vl ->
+              E_BagLiteral M E (t :: tl) (v :: vl)  
 
       with E_Forall :
             obj_model -> env -> string -> tm ->

@@ -104,7 +104,7 @@ Inductive tm : Type :=
 | CExcludes     : tm -> tm -> tm
 | CIsEmpty      : tm -> tm
 | CNotEmpty     : tm -> tm
-| CIsUnique     : tm -> attr -> tm
+| CIsUnique     : tm -> tm
 
 (*  Iterator（绑定变量！）, forall，exists中的varList是语法糖，可脱糖为单变量表示 *)
 
