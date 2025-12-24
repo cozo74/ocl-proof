@@ -4,3 +4,4 @@ proof/Types.v
 proof/Syntax.v
 proof/Utils.v
 proof/Semantic.v
+proof/Typing.v

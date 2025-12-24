@@ -43,11 +43,11 @@ Inductive str_binop : Type :=
 Inductive agg_binop : Type :=
 | BMax | BMin | BMod | BDivInt.
 
-(* 集合聚合函数 *)
+(* bag聚合函数 *)
 Inductive aggop : Type  :=
-| AggMin | AggMax | AggSize | AggSum.
+| AggMin | AggMax | AggSize | AggSum .
 
-(* 暂不考虑 AggAvg，可通过sum和size的组合实现.  *)
+(* 暂不考虑 AggAvg *)
 
 
 

@@ -345,7 +345,7 @@ Definition aggop_sem (op : aggop) (xs : list value) : option value :=
           | None => None
           end
       end
-  end.
+
 
 
   (* | AggAvg =>
@@ -366,7 +366,7 @@ Definition aggop_sem (op : aggop) (xs : list value) : option value :=
           | None => None
           end
       end *)
-
+  end.
 
 
 Inductive StringAt : string -> Z -> string -> Prop :=
