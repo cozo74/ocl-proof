@@ -1,6 +1,7 @@
 From Stdlib Require Import String.
 
 
+
 (* ================================= Type ======================================= *)
 
 Inductive ty : Type :=
@@ -12,3 +13,5 @@ Inductive ty : Type :=
 | Ty_Object: string -> ty.
 
 
+
+    

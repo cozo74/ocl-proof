@@ -8,15 +8,6 @@ Open Scope string_scope.
 (* ================================= Operational Semantics ======================================= *)
 
 
-Definition total_map (A : Type) := string -> A.
-Definition empty {A : Type} (v : A) : total_map A :=
-  (fun _ => v).
-
-Definition update {A : Type} (m : total_map A)
-  (x : string) (v : A) :=
-fun x' => if String.eqb x x' then v else m x'.
-
-
 
 
 
@@ -288,24 +279,127 @@ Fixpoint bag_is_unique (xs : list value) : bool :=
   end.
 
 
+
+
+
+  Fixpoint all_int (xs : list value) : option (list Z) :=
+  match xs with
+  | [] => Some []
+  | V_Int z :: tl =>
+      match all_int tl with
+      | Some zs => Some (z :: zs)
+      | None => None
+      end
+  | _ => None
+  end.
+
+Fixpoint all_real (xs : list value) : option (list R) :=
+  match xs with
+  | [] => Some []
+  | V_Real r :: tl =>
+      match all_real tl with
+      | Some rs => Some (r :: rs)
+      | None => None
+      end
+  | _ => None
+  end.
+
+
+Definition aggop_sem (op : aggop) (xs : list value) : option value :=
+  match op with
+  | AggSize =>
+      Some (V_Int (Z.of_nat (length xs)))
+
+  | AggMin =>
+      match all_int xs with
+      | Some (z :: zs) => Some (V_Int (fold_left Z.min zs z))
+    | Some [] =>
+          (* 空集合：通常 undefined *)
+          None
+      | None =>
+          match all_real xs with
+          | Some (r :: rs) => Some (V_Real (fold_left Rmin rs r))
+          | Some [] => None
+          | None => None
+          end
+      end
+
+  | AggMax =>
+      match all_int xs with
+      | Some (z :: zs) => Some (V_Int (fold_left Z.max zs z))
+      | Some [] => None
+      | None =>
+          match all_real xs with
+          | Some (r :: rs) => Some (V_Real (fold_left Rmax rs r))
+          | Some [] => None
+          | None => None
+          end
+      end
+
+  | AggSum =>
+      match all_int xs with
+      | Some zs => Some (V_Int (fold_left Z.add zs 0%Z))
+      | None =>
+          match all_real xs with
+          | Some rs => Some (V_Real (fold_left Rplus rs 0%R))
+          | None => None
+          end
+      end
+  end.
+
+
+  (* | AggAvg =>
+      (* avg 空集合通常 undefined；也可定义为 0 *)
+      match all_int xs with
+      | Some [] => None
+      | Some zs =>
+          let n := Z.of_nat (length zs) in
+          if Z.eqb n 0 then None
+          else Some (V_Real ((IZR (fold_left Z.add zs 0%Z)) / (IZR n))%R)
+      | None =>
+          match all_real xs with
+          | Some [] => None
+          | Some rs =>
+              let n := INR (length rs) in
+              (* length rs = 0 已被 [] 分支排除 *)
+              Some (V_Real ((fold_left Rplus rs 0%R) / n)%R)
+          | None => None
+          end
+      end *)
+
+
+
+Inductive StringAt : string -> Z -> string -> Prop :=
+  | StringAt_intro :
+      forall c s i,
+        (i = 1)%Z ->
+        StringAt (String c s) i (String c EmptyString)
+  
+  | StringAt_next :
+      forall c s i r,
+        (i > 1)%Z ->
+        StringAt s (i - 1) r ->
+        StringAt (String c s) i r.
+
+
+Inductive StringSub : string -> Z -> Z -> string -> Prop :=
+  | StringSub_intro :
+      forall s i j r,
+        (i <= j)%Z ->
+        StringAt s i r ->
+        (* r 的长度 = j - i + 1 *)
+        (* 这里可以用辅助关系 LengthString *)
+        StringSub s i j r.
+
+
+
+
+
+        
+
 Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
 
-  (* context C inv body 语义：对所有实例执行 forAll *)
-      | E_CContext :
-          forall M E C body v,
-            ceval M E (CForAll (CAllInstances C) "self" body) v ->
-            ceval M E (CContext C body) v
-      
 
-
-  (* Var Self *)
-      | E_CVar :
-          forall M E var,
-            ceval M E (CVar var) (E var)
-
-      | E_CSelf :
-          forall M E,
-          ceval M E CSelf (E "self")
 
   (*  字面量  *)
 
@@ -330,6 +424,72 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
             ceval M E (CObject oid) (V_Object oid)
 
 
+  (*  集合（Bag） *)
+
+      | E_CEmptyBag :
+          forall M E T,
+            ceval M E (CEmptyBag T) (V_Bag [])
+
+      | E_CBagLiteral :
+          forall M E ts vs,
+            E_BagLiteral M E ts vs ->
+            ceval M E (CBagLiteral ts) (V_Bag vs)
+
+
+
+
+  (* context C inv body 语义：对所有实例执行 forAll *)
+      | E_CContext :
+          forall M E C body v,
+            ceval M E (CForAll (CAllInstances C) "self" body) v ->
+            ceval M E (CContext C body) v
+      
+
+
+  (* Var Self *)
+      | E_CVar :
+          forall M E var,
+            ceval M E (CVar var) (E var)
+
+      | E_CSelf :
+          forall M E,
+          ceval M E CSelf (E "self")
+
+
+
+  (*  对象 / 属性 / 角色  *)
+
+      | E_CAttr :
+          forall M E t oid attr v,
+            ceval M E t (V_Object oid) ->
+            attrs (objects M oid) attr = v ->
+            ceval M E (CAttr t attr) v
+
+
+      | E_CRole :
+          forall M E t oid role r_oid,
+            ceval M E t (V_Object oid) ->
+            roles (objects M oid) role = r_oid ->
+            ceval M E (CRole t role) (V_Object r_oid)
+
+
+      | E_CNRole :
+          forall M E t oid nrole oids,
+            ceval M E t (V_Object oid) ->
+            nroles (objects M oid) nrole = oids ->
+            ceval M E (CNRole t nrole)
+                  (V_Bag (map V_Object oids))
+
+
+
+  (*  allInstances  *)
+
+      | E_CAllInstances :
+          forall M E C oids,
+            cmap M C = oids ->
+            ceval M E (CAllInstances C) (V_Bag (map V_Object oids))
+
+        
 
 
   (* 一元运算 *)
@@ -424,50 +584,6 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
             ceval M E (CAggBin op t1 t2) v
 
 
-  (*  对象 / 属性 / 角色  *)
-
-      | E_CAttr :
-          forall M E t oid attr v,
-            ceval M E t (V_Object oid) ->
-            attrs (objects M oid) attr = v ->
-            ceval M E (CAttr t attr) v
-
-
-      | E_CRole :
-          forall M E t oid role r_oid,
-            ceval M E t (V_Object oid) ->
-            roles (objects M oid) role = r_oid ->
-            ceval M E (CRole t role) (V_Object r_oid)
-
-
-      | E_CNRole :
-          forall M E t oid nrole oids,
-            ceval M E t (V_Object oid) ->
-            nroles (objects M oid) nrole = oids ->
-            ceval M E (CNRole t nrole)
-                  (V_Bag (map V_Object oids))
-
-
-  (*  集合（Bag） *)
-
-      | E_CEmptyBag :
-          forall M E T,
-            ceval M E (CEmptyBag T) (V_Bag [])
-
-      | E_CBagLiteral :
-          forall M E ts vs,
-            E_BagLiteral M E ts vs ->
-            ceval M E (CBagLiteral ts) (V_Bag vs)
-
-
-  (*  allInstances  *)
-
-      | E_CAllInstances :
-          forall M E C oids,
-            cmap M C = oids ->
-            ceval M E (CAllInstances C) (V_Bag (map V_Object oids))
-
-        
   (*  Bag 运算  *)
 
       | E_CUnion :
@@ -594,6 +710,34 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
               ceval M E (CNRCollect bag_tm nrole) (V_Bag vs')
 
 
+  (*  bag聚合  *)
+
+      | E_EAggregate :
+          forall M E op t xs v,
+            ceval M E t (V_Bag xs) ->
+            aggop_sem op xs = Some v -> ceval M E (EAggregate op t) v
+
+
+  (* String ops with integer arguments *)
+
+      | E_EAt :
+          forall M E t s i r,
+            ceval M E t (V_String s) ->
+            StringAt s i r ->
+            ceval M E (EAt t i) (V_String r)
+
+      | E_ESubstring :
+          forall M E t s i j r,
+            ceval M E t (V_String s) ->
+            StringSub s i j r ->
+            ceval M E (ESubstring t i j) (V_String r)
+
+
+
+
+
+
+            
 
       with E_BagLiteral :
             obj_model -> env -> list tm -> list value -> Prop :=

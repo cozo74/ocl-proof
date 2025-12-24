@@ -1,6 +1,6 @@
 From Stdlib Require Import String ZArith Reals List.
 
-From OCL Require Import Types.
+From OCL Require Import Types Utils.
 Import ListNotations.
 
 
@@ -45,18 +45,15 @@ Inductive agg_binop : Type :=
 
 (* 集合聚合函数 *)
 Inductive aggop : Type  :=
-| AggMin | AggMax | AggSize | AggSum | AggAvg. 
+| AggMin | AggMax | AggSize | AggSum.
+
+(* 暂不考虑 AggAvg，可通过sum和size的组合实现.  *)
 
 
 
 (* OCL 表达式（统一 AST） *)
 Inductive tm : Type :=
 
-| CContext : string -> tm -> tm
-
-(*  原子  *)
-| CVar    : var -> tm
-| CSelf   : tm
 
 (*  字面量  *)
 | CBool   : bool -> tm
@@ -64,6 +61,34 @@ Inductive tm : Type :=
 | CReal   : R -> tm
 | CString : string -> tm
 | CObject : string -> tm
+
+
+
+(*  集合（Bag） *)
+| CEmptyBag   : ty -> tm
+| CBagLiteral : list tm -> tm
+
+
+
+(*  context *)
+| CContext : string -> tm -> tm
+
+
+
+(*  Var Self  *)
+| CVar    : var -> tm
+| CSelf   : tm
+
+
+(*  对象 / 属性 / 角色  *)
+| CAttr   : tm -> attr -> tm
+| CRole   : tm -> role -> tm
+| CNRole   : tm -> nrole -> tm
+
+
+(*  allInstances  *)
+| CAllInstances : class -> tm
+
 
 (*  一元操作  *)
 | CBoolUn    : bool_unop -> tm -> tm
@@ -78,24 +103,15 @@ Inductive tm : Type :=
 | CAggBin    : agg_binop -> tm -> tm -> tm
 
 
-(*  对象 / 属性 / 角色  *)
-| CAttr   : tm -> attr -> tm
-| CRole   : tm -> role -> tm
-| CNRole   : tm -> nrole -> tm
 
-
-(*  集合（Bag） *)
-| CEmptyBag   : ty -> tm
-| CBagLiteral : list tm -> tm
-
-(*  allInstances  *)
-| CAllInstances : class -> tm
 
 (*  Bag 运算  *)
 | CUnion        : tm -> tm -> tm
 | CIntersect    : tm -> tm -> tm
 | CDifference   : tm -> tm -> tm
 | CSymDiff      : tm -> tm -> tm
+
+
 
 (*  Bag 谓词  *)
 | CIncludesAll  : tm -> tm -> tm
@@ -118,11 +134,10 @@ Inductive tm : Type :=
 | CNRCollect : tm -> nrole -> tm
 
 
-(*  聚合  *)
+(*  bag聚合  *)
 | EAggregate : aggop -> tm -> tm
 
 
 (* String ops with integer arguments *)
-| ESubstring : tm -> Z -> Z -> tm
-| EAt        : tm -> Z -> tm .
-
+| EAt        : tm -> Z -> tm 
+| ESubstring : tm -> Z -> Z -> tm .

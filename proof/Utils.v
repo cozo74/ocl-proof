@@ -2,6 +2,17 @@ From Stdlib Require Import Ascii Arith String ZArith Reals.
 
 
 
+Definition total_map (A : Type) := string -> A.
+Definition empty {A : Type} (v : A) : total_map A :=
+  (fun _ => v).
+
+Definition update {A : Type} (m : total_map A)
+  (x : string) (v : A) :=
+fun x' => if String.eqb x x' then v else m x'.
+
+
+
+
 Definition Rfloor_real (r : R) (z : Z) : Prop :=
   (IZR z <= r < IZR (z + 1))%R.
 
