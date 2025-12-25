@@ -3,14 +3,30 @@ From Stdlib Require Import Ascii Arith String ZArith Reals.
 
 
 Definition total_map (A : Type) := string -> A.
-Definition empty {A : Type} (v : A) : total_map A :=
-  (fun _ => v).
+(* Definition empty {A : Type} (v : A) : total_map A :=
+  (fun _ => v). *)
 
-Definition update {A : Type} (m : total_map A)
+Definition t_update {A : Type} (m : total_map A)
   (x : string) (v : A) :=
 fun x' => if String.eqb x x' then v else m x'.
 
 
+Lemma t_update_eq : forall A (m : total_map A) x v,
+  (t_update m x v) x = v.
+Proof.
+  intros. unfold t_update. rewrite String.eqb_refl. reflexivity.
+Qed.
+
+
+Lemma t_update_neq : forall A (m : total_map A) x y v,
+  x <> y ->
+  (t_update m x v) y = m y.
+Proof.
+  intros. unfold t_update.
+  destruct (String.eqb y x) eqn:Heq.
+  - apply String.eqb_eq in Heq. subst. contradiction.
+  - apply String.eqb_neq in H. rewrite H. reflexivity.
+Qed.
 
 
 Definition Rfloor_real (r : R) (z : Z) : Prop :=

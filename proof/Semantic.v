@@ -282,7 +282,7 @@ Fixpoint bag_is_unique (xs : list value) : bool :=
 
 
 
-  Fixpoint all_int (xs : list value) : option (list Z) :=
+Fixpoint all_int (xs : list value) : option (list Z) :=
   match xs with
   | [] => Some []
   | V_Int z :: tl =>
@@ -397,7 +397,7 @@ Inductive StringSub : string -> Z -> Z -> string -> Prop :=
 
         
 
-Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
+Inductive cevalR : obj_model -> env -> tm -> value -> Prop :=
 
 
 
@@ -405,35 +405,35 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
 
       | E_CBool :
           forall M E b,
-            ceval M E (CBool b) (V_Bool b)
+            cevalR M E (CBool b) (V_Bool b)
 
       | E_CInt :
           forall M E n,
-            ceval M E (CInt n) (V_Int n)
+            cevalR M E (CInt n) (V_Int n)
 
       | E_CReal :
           forall M E r,
-            ceval M E (CReal r) (V_Real r)
+            cevalR M E (CReal r) (V_Real r)
 
       | E_CString :
           forall M E s,
-            ceval M E (CString s) (V_String s)
+            cevalR M E (CString s) (V_String s)
 
-      | E_CObject :
+      (* | E_CObject :
           forall M E oid,
-            ceval M E (CObject oid) (V_Object oid)
+            cevalR M E (CObject oid) (V_Object oid) *)
 
 
   (*  集合（Bag） *)
 
       | E_CEmptyBag :
           forall M E T,
-            ceval M E (CEmptyBag T) (V_Bag [])
+            cevalR M E (CEmptyBag T) (V_Bag [])
 
       | E_CBagLiteral :
           forall M E ts vs,
             E_BagLiteral M E ts vs ->
-            ceval M E (CBagLiteral ts) (V_Bag vs)
+            cevalR M E (CBagLiteral ts) (V_Bag vs)
 
 
 
@@ -441,19 +441,23 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
   (* context C inv body 语义：对所有实例执行 forAll *)
       | E_CContext :
           forall M E C body v,
-            ceval M E (CForAll (CAllInstances C) "self" body) v ->
-            ceval M E (CContext C body) v
+            cevalR M E (CForAll (CAllInstances C) "self" body) v ->
+            cevalR M E (CContext C body) v
       
 
 
   (* Var Self *)
+
       | E_CVar :
-          forall M E var,
-            ceval M E (CVar var) (E var)
+          forall M E var v,
+            E var = v ->
+            cevalR M E (CVar var) v
+      
 
       | E_CSelf :
-          forall M E,
-          ceval M E CSelf (E "self")
+          forall M E oid,
+            E "self" = V_Object oid ->
+            cevalR M E CSelf (V_Object oid)
 
 
 
@@ -461,23 +465,23 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
 
       | E_CAttr :
           forall M E t oid attr v,
-            ceval M E t (V_Object oid) ->
+            cevalR M E t (V_Object oid) ->
             attrs (objects M oid) attr = v ->
-            ceval M E (CAttr t attr) v
+            cevalR M E (CAttr t attr) v
 
 
       | E_CRole :
           forall M E t oid role r_oid,
-            ceval M E t (V_Object oid) ->
+            cevalR M E t (V_Object oid) ->
             roles (objects M oid) role = r_oid ->
-            ceval M E (CRole t role) (V_Object r_oid)
+            cevalR M E (CRole t role) (V_Object r_oid)
 
 
       | E_CNRole :
           forall M E t oid nrole oids,
-            ceval M E t (V_Object oid) ->
+            cevalR M E t (V_Object oid) ->
             nroles (objects M oid) nrole = oids ->
-            ceval M E (CNRole t nrole)
+            cevalR M E (CNRole t nrole)
                   (V_Bag (map V_Object oids))
 
 
@@ -487,7 +491,7 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
       | E_CAllInstances :
           forall M E C oids,
             cmap M C = oids ->
-            ceval M E (CAllInstances C) (V_Bag (map V_Object oids))
+            cevalR M E (CAllInstances C) (V_Bag (map V_Object oids))
 
         
 
@@ -497,38 +501,38 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
 
       | E_CBoolUn :
           forall M E op t v v',
-            ceval M E t v ->
+            cevalR M E t v ->
             bool_unop_sem op v = Some v' ->
-            ceval M E (CBoolUn op t) v'
+            cevalR M E (CBoolUn op t) v'
 
 
 
       | E_CArithUn :
           forall M E op t v v',
-            ceval M E t v ->
+            cevalR M E t v ->
             arith_unop_sem op v = Some v' ->
-            ceval M E (CArithUn op t) v'
+            cevalR M E (CArithUn op t) v'
 
       | E_CArithUnRealUFloor :
         forall M E t r z,
-          ceval M E t (V_Real r) ->
+          cevalR M E t (V_Real r) ->
           Rfloor_real r z ->
-          ceval M E (CArithUn UFloor t) (V_Int z)
+          cevalR M E (CArithUn UFloor t) (V_Int z)
 
       | E_CArithUnRealURound :
         forall M E t r z,
-          ceval M E t (V_Real r) ->
+          cevalR M E t (V_Real r) ->
           Rround_real r z ->
-          ceval M E (CArithUn URound t) (V_Int z)
+          cevalR M E (CArithUn URound t) (V_Int z)
 
 
 
 
       | E_CStrUn :
           forall M E op t v v',
-            ceval M E t v ->
+            cevalR M E t v ->
             str_unop_sem op v = Some v' ->
-            ceval M E (CStrUn op t) v'
+            cevalR M E (CStrUn op t) v'
 
 
 
@@ -539,29 +543,29 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
 
       | E_CBoolBin :
           forall M E op t1 t2 b1 b2,
-            ceval M E t1 (V_Bool b1) ->
-            ceval M E t2 (V_Bool b2) ->
-            ceval M E (CBoolBin op t1 t2) (V_Bool (bool_binop_sem op b1 b2))
+            cevalR M E t1 (V_Bool b1) ->
+            cevalR M E t2 (V_Bool b2) ->
+            cevalR M E (CBoolBin op t1 t2) (V_Bool (bool_binop_sem op b1 b2))
 
 
     (* 二元比较运算 *)
 
       | E_CCompBin :
           forall M E op t1 t2 v1 v2 b,
-            ceval M E t1 v1 ->
-            ceval M E t2 v2 ->
+            cevalR M E t1 v1 ->
+            cevalR M E t2 v2 ->
             comp_binop_sem op v1 v2 = Some b ->
-            ceval M E (CCompBin op t1 t2) (V_Bool b)
+            cevalR M E (CCompBin op t1 t2) (V_Bool b)
 
 
     (* 二元算数运算 *)
 
       | E_CArithBin :
           forall M E op t1 t2 v1 v2 v,
-            ceval M E t1 v1 ->
-            ceval M E t2 v2 ->
+            cevalR M E t1 v1 ->
+            cevalR M E t2 v2 ->
             arith_binop_sem op v1 v2 = Some v ->
-            ceval M E (CArithBin op t1 t2) v
+            cevalR M E (CArithBin op t1 t2) v
 
 
 
@@ -569,83 +573,83 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
 
       | E_CStrBin :
           forall M E op t1 t2 v1 v2 v,
-            ceval M E t1 v1 ->
-            ceval M E t2 v2 ->
+            cevalR M E t1 v1 ->
+            cevalR M E t2 v2 ->
             str_binop_sem op v1 v2 = Some v ->
-            ceval M E (CStrBin op t1 t2) v
+            cevalR M E (CStrBin op t1 t2) v
 
     (* 二元聚合运算 *)
 
       | E_CAggBin :
           forall M E op t1 t2 v1 v2 v,
-            ceval M E t1 v1 ->
-            ceval M E t2 v2 ->
+            cevalR M E t1 v1 ->
+            cevalR M E t2 v2 ->
             agg_binop_sem op v1 v2 = Some v ->
-            ceval M E (CAggBin op t1 t2) v
+            cevalR M E (CAggBin op t1 t2) v
 
 
   (*  Bag 运算  *)
 
       | E_CUnion :
           forall M E t1 t2 xs ys,
-            ceval M E t1 (V_Bag xs) ->
-            ceval M E t2 (V_Bag ys) ->
-            ceval M E (CUnion t1 t2) (V_Bag (bag_union xs ys))
+            cevalR M E t1 (V_Bag xs) ->
+            cevalR M E t2 (V_Bag ys) ->
+            cevalR M E (CUnion t1 t2) (V_Bag (bag_union xs ys))
 
       | E_CIntersect :
           forall M E t1 t2 xs ys,
-            ceval M E t1 (V_Bag xs) ->
-            ceval M E t2 (V_Bag ys) ->
-            ceval M E (CIntersect t1 t2) (V_Bag (bag_intersect xs ys))
+            cevalR M E t1 (V_Bag xs) ->
+            cevalR M E t2 (V_Bag ys) ->
+            cevalR M E (CIntersect t1 t2) (V_Bag (bag_intersect xs ys))
 
       | E_CDifference :
         forall M E t1 t2 xs ys,
-          ceval M E t1 (V_Bag xs) ->
-          ceval M E t2 (V_Bag ys) ->
-          ceval M E (CDifference t1 t2) (V_Bag (bag_difference xs ys))
+          cevalR M E t1 (V_Bag xs) ->
+          cevalR M E t2 (V_Bag ys) ->
+          cevalR M E (CDifference t1 t2) (V_Bag (bag_difference xs ys))
 
       | E_CSymDiff :
           forall M E t1 t2 xs ys,
-            ceval M E t1 (V_Bag xs) ->
-            ceval M E t2 (V_Bag ys) ->
-            ceval M E (CSymDiff t1 t2) (V_Bag (bag_symdiff xs ys))
+            cevalR M E t1 (V_Bag xs) ->
+            cevalR M E t2 (V_Bag ys) ->
+            cevalR M E (CSymDiff t1 t2) (V_Bag (bag_symdiff xs ys))
 
   (*  Bag 谓词  *)
 
       | E_CIncludes :
           forall M E t1 t2 xs ys,
-            ceval M E t1 (V_Bag xs) ->
-            ceval M E t2 (V_Bag ys) ->
-            ceval M E (CIncludes t1 t2) (V_Bool (bag_includes xs ys))
+            cevalR M E t1 (V_Bag xs) ->
+            cevalR M E t2 (V_Bag ys) ->
+            cevalR M E (CIncludes t1 t2) (V_Bool (bag_includes xs ys))
 
       | E_CIncludesAll :
           forall M E t1 t2 xs ys,
-            ceval M E t1 (V_Bag xs) ->
-            ceval M E t2 (V_Bag ys) ->
-            ceval M E (CIncludesAll t1 t2) (V_Bool (bag_includes_all xs ys))
+            cevalR M E t1 (V_Bag xs) ->
+            cevalR M E t2 (V_Bag ys) ->
+            cevalR M E (CIncludesAll t1 t2) (V_Bool (bag_includes_all xs ys))
 
 
       | E_CExcludes :
           forall M E t1 t2 xs ys,
-            ceval M E t1 (V_Bag xs) ->
-            ceval M E t2 (V_Bag ys) ->
-            ceval M E (CExcludes t1 t2) (V_Bool (bag_excludes xs ys))
+            cevalR M E t1 (V_Bag xs) ->
+            cevalR M E t2 (V_Bag ys) ->
+            cevalR M E (CExcludes t1 t2) (V_Bool (bag_excludes xs ys))
 
       | E_CExcludesAll :
           forall M E t1 t2 xs ys,
-            ceval M E t1 (V_Bag xs) ->
-            ceval M E t2 (V_Bag ys) ->
-            ceval M E (CExcludesAll t1 t2) (V_Bool (bag_excludes_all xs ys))
+            cevalR M E t1 (V_Bag xs) ->
+            cevalR M E t2 (V_Bag ys) ->
+            cevalR M E (CExcludesAll t1 t2) (V_Bool (bag_excludes_all xs ys))
 
       | E_CIsEmpty :
           forall M E t xs,
-            ceval M E t (V_Bag xs) ->
-            ceval M E (CIsEmpty t) (V_Bool (bag_is_empty xs))
+            cevalR M E t (V_Bag xs) ->
+            cevalR M E (CIsEmpty t) (V_Bool (bag_is_empty xs))
 
       | E_CNotEmpty :
           forall M E t xs,
-            ceval M E t (V_Bag xs) ->
-            ceval M E (CNotEmpty t) (V_Bool (bag_not_empty xs))
+            cevalR M E t (V_Bag xs) ->
+            cevalR M E (CNotEmpty t) (V_Bool (bag_not_empty xs))
 
 
   (*  Iterator（绑定变量！）, forall，exists中的varList是语法糖，可脱糖为单变量表示 *)
@@ -654,83 +658,83 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
 
       | E_CForAll :
         forall M E bag_tm var body vs b,
-          ceval M E bag_tm (V_Bag vs) ->
+          cevalR M E bag_tm (V_Bag vs) ->
           E_Forall M E var body vs b ->
-          ceval M E (CForAll bag_tm var body) (V_Bool b)
+          cevalR M E (CForAll bag_tm var body) (V_Bool b)
 
 
       | E_CExists :
           forall M E bag_tm var body vs b,
-            ceval M E bag_tm (V_Bag vs) ->
+            cevalR M E bag_tm (V_Bag vs) ->
             E_Exists M E var body vs b ->
-            ceval M E (CExists bag_tm var body) (V_Bool b)
+            cevalR M E (CExists bag_tm var body) (V_Bool b)
 
 
       | E_CSelect :
           forall M E bag_tm var body vs vs',
-            ceval M E bag_tm (V_Bag vs) ->
+            cevalR M E bag_tm (V_Bag vs) ->
             E_Select M E var body vs vs' ->
-            ceval M E (CSelect bag_tm var body) (V_Bag vs')
+            cevalR M E (CSelect bag_tm var body) (V_Bag vs')
 
 
       | E_CReject :
           forall M E bag_tm var body vs vs',
-            ceval M E bag_tm (V_Bag vs) ->
+            cevalR M E bag_tm (V_Bag vs) ->
             E_Reject M E var body vs vs' ->
-            ceval M E (CReject bag_tm var body) (V_Bag vs')
+            cevalR M E (CReject bag_tm var body) (V_Bag vs')
 
 
       | E_COne :
             forall M E bag_tm var body vs b,
-              ceval M E bag_tm (V_Bag vs) ->
+              cevalR M E bag_tm (V_Bag vs) ->
               E_One M E var body vs b ->
-              ceval M E (COne bag_tm var body) (V_Bool b)
+              cevalR M E (COne bag_tm var body) (V_Bool b)
 
 
 
       | E_CCollect :
             forall M E bag_tm attr vs vs',
-              ceval M E bag_tm (V_Bag vs) ->
+              cevalR M E bag_tm (V_Bag vs) ->
               E_Collect M E attr vs vs' ->
-              ceval M E (CCollect bag_tm attr) (V_Bag vs')
+              cevalR M E (CCollect bag_tm attr) (V_Bag vs')
 
 
 
       | E_CRCollect :
             forall M E bag_tm role vs vs',
-              ceval M E bag_tm (V_Bag vs) ->
+              cevalR M E bag_tm (V_Bag vs) ->
               E_RCollect M E role vs vs' ->
-              ceval M E (CRCollect bag_tm role) (V_Bag vs')
+              cevalR M E (CRCollect bag_tm role) (V_Bag vs')
 
 
       | E_CNRCollect :
             forall M E bag_tm nrole vs vs',
-              ceval M E bag_tm (V_Bag vs) ->
+              cevalR M E bag_tm (V_Bag vs) ->
               E_NRCollect M E nrole vs vs' ->
-              ceval M E (CNRCollect bag_tm nrole) (V_Bag vs')
+              cevalR M E (CNRCollect bag_tm nrole) (V_Bag vs')
 
 
   (*  bag聚合  *)
 
       | E_EAggregate :
           forall M E op t xs v,
-            ceval M E t (V_Bag xs) ->
-            aggop_sem op xs = Some v -> ceval M E (EAggregate op t) v
+            cevalR M E t (V_Bag xs) ->
+            aggop_sem op xs = Some v -> cevalR M E (EAggregate op t) v
 
 
   (* String ops with integer arguments *)
 
       | E_EAt :
           forall M E t s i r,
-            ceval M E t (V_String s) ->
+            cevalR M E t (V_String s) ->
             StringAt s i r ->
-            ceval M E (EAt t i) (V_String r)
+            cevalR M E (EAt t i) (V_String r)
 
       | E_ESubstring :
           forall M E t s i j r,
-            ceval M E t (V_String s) ->
+            cevalR M E t (V_String s) ->
             StringSub s i j r ->
-            ceval M E (ESubstring t i j) (V_String r)
+            cevalR M E (ESubstring t i j) (V_String r)
 
 
 
@@ -747,7 +751,7 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
 
         | E_BagLitCons :
             forall M E t tl v vl,
-              ceval M E t v ->
+              cevalR M E t v ->
               E_BagLiteral M E tl vl ->
               E_BagLiteral M E (t :: tl) (v :: vl)  
 
@@ -761,13 +765,13 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
         
         | E_ForallConsTrue :
             forall M E var body v tl,
-              ceval M (update E var v) body (V_Bool true) ->
+              cevalR M (t_update E var v) body (V_Bool true) ->
               E_Forall M E var body tl true ->
               E_Forall M E var body (v :: tl) true
         
         | E_ForallConsFalse :
             forall M E var body v tl,
-              ceval M (update E var v) body (V_Bool false) ->
+              cevalR M (t_update E var v) body (V_Bool false) ->
               E_Forall M E var body (v :: tl) false
 
       with E_Exists :
@@ -780,12 +784,12 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
         
         | E_ExistsConsTrue :
             forall M E var body v tl,
-              ceval M (update E var v) body (V_Bool true) ->
+              cevalR M (t_update E var v) body (V_Bool true) ->
               E_Exists M E var body (v :: tl) true
         
         | E_ExistsConsFalse :
             forall M E var body v tl,
-              ceval M (update E var v) body (V_Bool false) ->
+              cevalR M (t_update E var v) body (V_Bool false) ->
               E_Exists M E var body tl true ->
               E_Exists M E var body (v :: tl) true
 
@@ -799,13 +803,13 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
 
         | E_SelectConsKeep :
             forall M E var body v tl out_tl,
-              ceval M (update E var v) body (V_Bool true) ->
+              cevalR M (t_update E var v) body (V_Bool true) ->
               E_Select M E var body tl out_tl ->
               E_Select M E var body (v :: tl) (v :: out_tl)
 
         | E_SelectConsDrop :
             forall M E var body v tl out_tl,
-              ceval M (update E var v) body (V_Bool false) ->
+              cevalR M (t_update E var v) body (V_Bool false) ->
               E_Select M E var body tl out_tl ->
               E_Select M E var body (v :: tl) out_tl
 
@@ -819,13 +823,13 @@ Inductive ceval : obj_model -> env -> tm -> value -> Prop :=
         
         | E_RejectConsKeep :
             forall M E var body v tl out_tl,
-              ceval M (update E var v) body (V_Bool false) ->
+              cevalR M (t_update E var v) body (V_Bool false) ->
               E_Reject M E var body tl out_tl ->
               E_Reject M E var body (v :: tl) (v :: out_tl)
         
         | E_RejectConsDrop :
             forall M E var body v tl out_tl,
-              ceval M (update E var v) body (V_Bool true) ->
+              cevalR M (t_update E var v) body (V_Bool true) ->
               E_Reject M E var body tl out_tl ->
               E_Reject M E var body (v :: tl) out_tl
         

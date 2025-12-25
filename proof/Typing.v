@@ -3,21 +3,56 @@
 From Stdlib Require Import String ZArith Reals List.
 Import ListNotations.
 
-From OCL Require Import Types Syntax Utils.
+From OCL Require Import Types Syntax Utils Semantic.
 Open Scope string_scope.
 
 (* ================================= Typing ======================================= *)
 
 
+Inductive vhas_type (M : obj_model) : value -> ty -> Prop :=
 
-Definition attr_key (cname a : string) : string :=
-  cname ++ "." ++ a.
+    | VT_Bool :
+        forall b,
+            vhas_type M (V_Bool b) Ty_Bool
 
-Definition role_key (cname r : string) : string :=
-  cname ++ "." ++ r.
+    | VT_Int :
+        forall n,
+            vhas_type M (V_Int n) Ty_Int
 
-Definition nrole_key (cname nr : string) : string :=
-  cname ++ "." ++ nr.
+    | VT_Real :
+        forall r,
+            vhas_type M (V_Real r) Ty_Real
+
+    | VT_String :
+        forall s,
+            vhas_type M (V_String s) Ty_String
+
+    | VT_Object :
+        forall oid,
+            vhas_type M (V_Object oid) (Ty_Object (cname (objects M oid)))
+
+    | VT_Bag :
+        forall vs T,
+            (forall v, In v vs -> vhas_type M v T) ->
+            vhas_type M (V_Bag vs) (Ty_Bag T).
+
+
+
+
+
+
+
+
+
+
+Definition attr_key (cn a : string) : string :=
+  cn ++ "." ++ a.
+
+Definition role_key (cn r : string) : string :=
+  cn ++ "." ++ r.
+
+Definition nrole_key (cn nr : string) : string :=
+  cn ++ "." ++ nr.
 
 
 
@@ -49,9 +84,9 @@ Inductive has_type : context -> tm -> ty -> Prop :=
         forall Gamma s,
             has_type Gamma (CString s) Ty_String
 
-    | T_Object :
-        forall Gamma cname,
-            has_type Gamma (CObject cname) (Ty_Object cname)
+    (* | T_Object :
+        forall Gamma cn,
+            has_type Gamma (CObject oid) (Ty_Object cn) *)
 
 (*  集合（Bag） *)
 
@@ -68,9 +103,9 @@ Inductive has_type : context -> tm -> ty -> Prop :=
 (*  context *)
 
     | T_Context :
-        forall Gamma cname body,
-            has_type (update Gamma "self" (Ty_Object cname)) body Ty_Bool ->
-            has_type Gamma (CContext cname body) Ty_Bool
+        forall Gamma cn body,
+            has_type (t_update Gamma "self" (Ty_Object cn)) body Ty_Bool ->
+            has_type Gamma (CContext cn body) Ty_Bool
 
 
 
@@ -82,39 +117,39 @@ Inductive has_type : context -> tm -> ty -> Prop :=
             has_type Gamma (CVar x) T
 
     | T_Self :
-        forall Gamma cname,
-            Gamma "self" = Ty_Object cname ->
-            has_type Gamma CSelf (Ty_Object cname)
+        forall Gamma cn,
+            Gamma "self" = Ty_Object cn ->
+            has_type Gamma CSelf (Ty_Object cn)
 
 (*  对象 / 属性 / 角色  *)
 
     | T_Attr :
-        forall Gamma t cname attr T,
-            has_type Gamma t (Ty_Object cname) ->
-            Gamma (attr_key cname attr) = T ->
+        forall Gamma t cn attr T,
+            has_type Gamma t (Ty_Object cn) ->
+            Gamma (attr_key cn attr) = T ->
             has_type Gamma (CAttr t attr) T
 
 
     | T_Role :
-        forall Gamma t cname r T,
-            has_type Gamma t (Ty_Object cname) ->
-            Gamma (role_key cname r) = Ty_Object T ->
+        forall Gamma t cn r T,
+            has_type Gamma t (Ty_Object cn) ->
+            Gamma (role_key cn r) = Ty_Object T ->
             has_type Gamma (CRole t r) (Ty_Object T)
 
 
 
     | T_NRole :
-        forall Gamma t cname r T,
-            has_type Gamma t (Ty_Object cname) ->
-            Gamma (nrole_key cname r) = Ty_Bag (Ty_Object T) ->
+        forall Gamma t cn r T,
+            has_type Gamma t (Ty_Object cn) ->
+            Gamma (nrole_key cn r) = Ty_Bag (Ty_Object T) ->
             has_type Gamma (CNRole t r) (Ty_Bag (Ty_Object T))
 
 
 (*  allInstances  *)
 
     | T_AllInstances :
-        forall Gamma cname,
-        has_type Gamma (CAllInstances cname) (Ty_Bag (Ty_Object cname))
+        forall Gamma cn,
+        has_type Gamma (CAllInstances cn) (Ty_Bag (Ty_Object cn))
 
 
 (*  一元操作  *)
@@ -132,9 +167,16 @@ Inductive has_type : context -> tm -> ty -> Prop :=
             has_type Gamma (CArithUn op t) Ty_Int
         
     | T_ArithUn_Real :
-            forall Gamma op t,
+        forall Gamma op t,
+            (op = UNeg \/ op = UAbs) ->
             has_type Gamma t Ty_Real ->
             has_type Gamma (CArithUn op t) Ty_Real
+    
+    | T_ArithUn_ToInt :
+        forall Gamma op t,
+            (op = UFloor \/ op = URound) ->
+            has_type Gamma t Ty_Real ->
+            has_type Gamma (CArithUn op t) Ty_Int
 
 
     | T_StrUn :
@@ -283,50 +325,50 @@ Inductive has_type : context -> tm -> ty -> Prop :=
     | T_ForAll :
         forall Gamma t x T body,
             has_type Gamma t (Ty_Bag T) ->
-            has_type (update Gamma x T) body Ty_Bool ->
+            has_type (t_update Gamma x T) body Ty_Bool ->
             has_type Gamma (CForAll t x body) Ty_Bool
 
     | T_Exists :
         forall Gamma t x T body,
             has_type Gamma t (Ty_Bag T) ->
-            has_type (update Gamma x T) body Ty_Bool ->
+            has_type (t_update Gamma x T) body Ty_Bool ->
             has_type Gamma (CExists t x body) Ty_Bool
 
 
     | T_Select :
         forall Gamma t x T body,
             has_type Gamma t (Ty_Bag T) ->
-            has_type (update Gamma x T) body Ty_Bool ->
+            has_type (t_update Gamma x T) body Ty_Bool ->
             has_type Gamma (CSelect t x body) (Ty_Bag T)
     
     | T_Reject :
         forall Gamma t x T body,
             has_type Gamma t (Ty_Bag T) ->
-            has_type (update Gamma x T) body Ty_Bool ->
+            has_type (t_update Gamma x T) body Ty_Bool ->
             has_type Gamma (CReject t x body) (Ty_Bag T)
         
     | T_One :
         forall Gamma t x T body,
             has_type Gamma t (Ty_Bag T) ->
-            has_type (update Gamma x T) body Ty_Bool ->
+            has_type (t_update Gamma x T) body Ty_Bool ->
             has_type Gamma (COne t x body) Ty_Bool
         
     | T_Collect :
-        forall Gamma t cname a T,
-            has_type Gamma t (Ty_Bag (Ty_Object cname)) ->
-            Gamma (attr_key cname a) = T ->
+        forall Gamma t cn a T,
+            has_type Gamma t (Ty_Bag (Ty_Object cn)) ->
+            Gamma (attr_key cn a) = T ->
             has_type Gamma (CCollect t a) (Ty_Bag T)
         
     | T_RCollect :
-        forall Gamma t cname r C,
-            has_type Gamma t (Ty_Bag (Ty_Object cname)) ->
-            Gamma (role_key cname r) = Ty_Object C ->
+        forall Gamma t cn r C,
+            has_type Gamma t (Ty_Bag (Ty_Object cn)) ->
+            Gamma (role_key cn r) = Ty_Object C ->
             has_type Gamma (CRCollect t r) (Ty_Bag (Ty_Object C))
     
     | T_NRCollect :
-        forall Gamma t cname r C,
-            has_type Gamma t (Ty_Bag (Ty_Object cname)) ->
-            Gamma (nrole_key cname r) = Ty_Bag (Ty_Object C) ->
+        forall Gamma t cn r C,
+            has_type Gamma t (Ty_Bag (Ty_Object cn)) ->
+            Gamma (nrole_key cn r) = Ty_Bag (Ty_Object C) ->
             has_type Gamma (CNRCollect t r) (Ty_Bag (Ty_Object C))
 
 (*  bag聚合  *)
