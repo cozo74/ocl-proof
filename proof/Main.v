@@ -35,57 +35,6 @@ Definition env_has_type (Gamma : context) (M : obj_model) (E : env) : Prop :=
         vhas_type M (E x) (Gamma x).
 
 
-(* lookup（变量规则用） *)
-
-Lemma env_has_type_lookup :
-    forall Gamma M E x,
-        env_has_type Gamma M E ->
-        vhas_type M (E x) (Gamma x).
-Proof.
-    intros Gamma M E x H.
-    unfold env_has_type in H.
-    apply H.
-Qed.
-
-
-(* extend（绑定变量 / self / iterator 用） *)
-
-Lemma env_has_type_extend :
-  forall Gamma M E x v T,
-    env_has_type Gamma M E ->
-    vhas_type M v T ->
-    env_has_type (t_update Gamma x T) M (t_update E x v).
-Proof.
-  intros Gamma M E x v T Henv Hv y.
-  unfold env_has_type in *.
-  destruct (String.eqb y x) eqn:Heq.
-  - apply String.eqb_eq in Heq; subst.
-    rewrite t_update_eq.
-    rewrite t_update_eq.
-    exact Hv.
-  - apply String.eqb_neq in Heq.
-    rewrite t_update_neq by congruence.
-    rewrite t_update_neq by congruence.
-    apply Henv.
-Qed.
-
-
-(* 不相关变量不受影响（可选，但常用） *)
-
-Lemma env_has_type_update_other :
-  forall Gamma M E x y v T,
-    x <> y ->
-    env_has_type Gamma M E ->
-    vhas_type M ((t_update E x v) y) ((t_update Gamma x T) y).
-Proof.
-  intros Gamma M E x y v T Hneq Henv.
-  unfold env_has_type in Henv.
-  rewrite t_update_neq by congruence.
-  rewrite t_update_neq by congruence.
-  apply Henv.
-Qed.
-
-
 
 
 Lemma E_Select_in_left :
@@ -224,28 +173,6 @@ Qed.
 
 
 
-
-Lemma all_int_sound :
-  forall xs zs,
-    all_int xs = Some zs ->
-    Forall (fun v => exists z, v = V_Int z) xs.
-Proof.
-  induction xs as [|v xs IH]; intros zs H.
-  - (* xs = [] *)
-    simpl in H.
-    inversion H.
-    constructor.
-  - (* xs = v :: xs *)
-    simpl in H.
-    destruct v as [z | | | | | ]; try discriminate.
-    (* 只剩 v = V_Int z *)
-    destruct (all_int xs) as [zs'|] eqn:Hxs; try discriminate.
-    inversion H; subst.
-    constructor.
-    + exists z. reflexivity.
-    + apply (IH zs').
-    reflexivity.
-Qed.
       
 Lemma vhas_type_int_inv :
   forall M v,
@@ -333,11 +260,6 @@ Qed.
 
 
 
-
-Hint Constructors vhas_type : core.
-Hint Resolve env_has_type_lookup : core.
-Hint Resolve env_has_type_extend : core.
-Hint Resolve env_has_type_update_other : core.
 
 
 
