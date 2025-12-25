@@ -313,9 +313,7 @@ Definition aggop_sem (op : aggop) (xs : list value) : option value :=
   | AggMin =>
       match all_int xs with
       | Some (z :: zs) => Some (V_Int (fold_left Z.min zs z))
-    | Some [] =>
-          (* 空集合：通常 undefined *)
-          None
+      | Some [] => None
       | None =>
           match all_real xs with
           | Some (r :: rs) => Some (V_Real (fold_left Rmin rs r))
@@ -338,7 +336,8 @@ Definition aggop_sem (op : aggop) (xs : list value) : option value :=
 
   | AggSum =>
       match all_int xs with
-      | Some zs => Some (V_Int (fold_left Z.add zs 0%Z))
+      | Some (z :: zs) => Some (V_Int (fold_left Z.add zs 0%Z))
+      | Some [] => None
       | None =>
           match all_real xs with
           | Some rs => Some (V_Real (fold_left Rplus rs 0%R))
