@@ -452,53 +452,56 @@ Theorem preservation_bigstep :
       revert T Hty.
       induction Hev; intros T0 Hty; try solve_simple_con.
       + intros v HIn. inversion HIn.
-      + intros v Hin.
-        revert v Hin.
-        induction H; try intros v Hin.
-        * (* E_BagLiteral_nil: ts = [], vs = [] *)
-          inversion Hin.
-
-        * intros v0 Hin.
-          simpl in Hin.
-          destruct Hin as [Hv0 | Hin0].
-          -- (* v0 = v *)
-            subst v0.
-            (* 从 H2 取 t : T *)
-            assert ( has_type Gamma t T0) as HtTy.
-            { apply H2. left. reflexivity. }
-            inversion H; subst.
-          
-          - (* v0 ∈ vl *)
-            (* 先从 Hty 拆出尾部 CBagLiteral tl 的类型 *)
-            inversion Hty; subst.
-            (* inversion 后通常会产生一个形如：
-                Hty_tl : has_type Gamma (CBagLiteral tl) (Ty_Bag T)
-              的假设；名字按你实际生成的为准。
-            *)
-          
-            (* 构造尾部逐项类型假设 *)
-            have H2_tl : forall t0 : tm, In t0 tl -> has_type Gamma t0 T.
-            { intros t0 Hin_t0. apply H2. right. exact Hin_t0. }
-          
-            (* 用 IHE_BagLiteral 解决 *)
-            eapply IHE_BagLiteral; eauto.
-          
-
+      + intros v Hin. contradiction.
+      + intros v0 Hin.
+        simpl in Hin.
+        destruct Hin as [Hv0 | Hin0].
+        - (* v0 = v *)
+          subst v0.
+          (* 由 H1 得到 t : T *)
+          assert(has_type Gamma t T) as HtTy.
+          { apply H1. left. reflexivity. }
+          (* 用 IHHev1 推 v : T *)
+          eapply IHHev1; eauto.
         
-
-      
-      eapply preservation_bagliteral; eauto.
-      + inversion Hty; subst. eapply IHHev; eauto.
-        eapply T_ForAll with (T := Ty_Object C).
-        * (* 证明 allInstances 的类型 *)
-          apply T_AllInstances.
-        * (* 证明 body 在 self 绑定后是 Bool *)
-          exact H3.
+        - (* v0 ∈ vl *)
+          (* 关键：从 IHHev2 得到整个 V_Bag vl 的类型 *)
+          assert ( vhas_type M (V_Bag vl) (Ty_Bag T)) as HvBag.
+          { eapply IHHev2; eauto.
+            (* 需要：has_type Gamma (CBagLiteral tl) (Ty_Bag T) *)
+            (* 从 Hty 反推尾部的 typing *)
+            inversion Hty; subst.
+            econstructor.
+            intros t0 Hin.
+            apply H1.
+            right; exact Hin.
+          }
+          (* 用 vhas_type 对 Bag 的定义，取出元素类型 *)
+          inversion HvBag; subst.
+          (* 现在应该有：forall x, In x vl -> vhas_type M x T *)
+          eauto.
       + inversion Hty; subst.
-      (* 现在你会得到：Gamma var = T 或者直接 T = Gamma var 之类的等式 *)
-        eapply env_has_type_lookup; eauto.
-      + inversion Hty; subst. rewrite <- H. rewrite <- H0.
-        eapply env_has_type_lookup; eauto.
+        (* 目标：vhas_type M v Ty_Bool *)
+        eapply IHHev; eauto.
+        (* 现在会产生子目标：has_type Gamma (CForAll (CAllInstances C) "self" body) Ty_Bool *)
+
+        (* 用 typing 构造子把它构造出来 *)
+        econstructor.
+        - (* 集合部分：CAllInstances C 的类型 *)
+          econstructor.
+        - (* body 部分：你已经有 H3 *)
+          exact H3.
+
+      + inversion Hty; subst. apply Henv.
+      + inversion Hty; subst.
+        pose proof (Hmodel oid) as Hm. 
+        destruct Hm as [Hattrs _].
+        assert ( vhas_type M (E "self") (Gamma "self")) as HselfTy.
+        { (* 可能直接 *)
+          specialize (Henv "self"); exact Henv.
+        }
+        rewrite H in HselfTy. rewrite H0 in HselfTy. exact HselfTy.
+        
       + inversion Hty; subst.
         pose proof (Hmodel oid) as Hm. 
         destruct Hm as [Hattrs _].
@@ -1123,44 +1126,9 @@ Theorem preservation_bigstep :
               rewrite Har in H.
               inversion H; subst.
               constructor.
-
-
-
-  Qed.
+Qed.
   
 
 
-
-
-
-
-
-(* 
-
- Lemma preservation_bagliteral :
- forall Gamma M E ts vs T,
-   env_has_type Gamma E ->
-   (forall t, In t ts -> has_type Gamma t T) ->
-   E_BagLiteral M E ts vs ->
-   forall v, In v vs -> vhas_type v T.
-Proof.
- intros Gamma M E ts vs T Henv Hts Hevts.
- induction Hevts.
- - (* E_BagLitNil: ts=[] vs=[] *)
-   intros v Hin. inversion Hin.
- - (* E_BagLitCons: ts=t::tl vs=v::vl *)
-   intros v0 Hin.
-   simpl in Hin. destruct Hin as [Heq | Hin'].
-   + subst v0.
-     (* 用外层的 preservation_bigstep（或你当前 theorem 的可用版本）去处理 cevalR M E t v *)
-     (* 需要：has_type Gamma t T *)
-     apply (preservation_bigstep Gamma M E t v T); try assumption.
-     * apply Hts. simpl. left. reflexivity.
-     * assumption.  (* cevalR 前提来自 E_BagLiteralCons 构造子里 *)
-   + (* v0 在尾部 vl *)
-     apply IHHevts.
-     * intros t0 HIn0. apply Hts. simpl. right. exact HIn0.
-     * exact Hin'.
-Qed. *)
 
 

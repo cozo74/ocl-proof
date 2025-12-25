@@ -429,11 +429,23 @@ Inductive cevalR : obj_model -> env -> tm -> value -> Prop :=
           forall M E T,
             cevalR M E (CEmptyBag T) (V_Bag [])
 
-      | E_CBagLiteral :
+
+            
+      (* | E_CBagLiteral :
           forall M E ts vs,
             E_BagLiteral M E ts vs ->
-            cevalR M E (CBagLiteral ts) (V_Bag vs)
+            cevalR M E (CBagLiteral ts) (V_Bag vs) *)
 
+      | E_CBagLitNil :
+          forall M E,
+            cevalR M E (CBagLiteral []) (V_Bag [])
+      
+
+      | E_CBagLitCons :
+          forall M E t tl v vl,
+            cevalR M E t v ->
+            cevalR M E (CBagLiteral tl) (V_Bag vl) ->
+            cevalR M E (CBagLiteral (t :: tl)) (V_Bag (v :: vl))
 
 
 
@@ -741,7 +753,7 @@ Inductive cevalR : obj_model -> env -> tm -> value -> Prop :=
 
 
             
-
+(* 
       with E_BagLiteral :
             obj_model -> env -> list tm -> list value -> Prop :=
         | E_BagLitNil :
@@ -752,7 +764,7 @@ Inductive cevalR : obj_model -> env -> tm -> value -> Prop :=
             forall M E t tl v vl,
               cevalR M E t v ->
               E_BagLiteral M E tl vl ->
-              E_BagLiteral M E (t :: tl) (v :: vl)  
+              E_BagLiteral M E (t :: tl) (v :: vl)   *)
 
       with E_Forall :
             obj_model -> env -> string -> tm ->
