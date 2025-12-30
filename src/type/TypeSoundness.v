@@ -1,6 +1,6 @@
 From Stdlib Require Import String ZArith Reals List.
 
-From OCL Require Import Types Syntax Utils Typing Semantic.
+From OCL.type Require Import Types Syntax Utils Typing Semantic.
 Open Scope string_scope.
 
 

@@ -1,7 +1,7 @@
--R proof OCL
+-R src OCL
 
-proof/Types.v
-proof/Syntax.v
-proof/Utils.v
-proof/Semantic.v
-proof/Typing.v
+src/type/Types.v
+src/type/Syntax.v
+src/type/Utils.v
+src/type/Semantic.v
+src/type/Typing.v

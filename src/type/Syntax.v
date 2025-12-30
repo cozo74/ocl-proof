@@ -1,6 +1,6 @@
 From Stdlib Require Import String ZArith Reals List.
 
-From OCL Require Import Types Utils.
+From OCL.type Require Import Types Utils.
 Import ListNotations.
 
 

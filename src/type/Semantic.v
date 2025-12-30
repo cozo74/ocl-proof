@@ -2,7 +2,7 @@
 From Stdlib Require Import String ZArith Reals List.
 Import ListNotations.
 
-From OCL Require Import Types Syntax Utils.
+From OCL.type Require Import Types Syntax Utils.
 Open Scope string_scope.
 
 (* ================================= Operational Semantics ======================================= *)
