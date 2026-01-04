@@ -20,10 +20,10 @@ Definition RoleName  := string.
 
 (* OCL / UML 中的基础类型（可后续扩展） *)
 Inductive BaseTy : Type :=
-| TyBool
-| TyInt
-| TyReal
-| TyString.
+  | TyBool
+  | TyInt
+  | TyReal
+  | TyString.
 
 (* UML 属性类型：目前仅支持基础类型 *)
 Definition AttrTy := BaseTy.
@@ -40,8 +40,8 @@ Record Attribute : Type := {
 
 (* 只允许 1 和 n *)
 Inductive Multiplicity : Type :=
-| One     (* 1 *)
-| Many.  (* n *)
+  | One     (* 1 *)
+  | Many.  (* n *)
 
 (*************************************************************)
 (*                       UML 类定义                          *)
@@ -82,17 +82,48 @@ Record UMLModel : Type := {
   uml_assocs  : list UAssociation
 }.
 
+
+
+
+Definition assoc_matches_role
+  (C : ClassName) (r : RoleName) (a : UAssociation) : bool :=
+  (String.eqb a.(assoc_c1) C && String.eqb a.(assoc_role1) r)
+  ||
+  (String.eqb a.(assoc_c2) C && String.eqb a.(assoc_role2) r).
+
+
+
+
+
+Fixpoint lookup_role_assoc
+  (UA : list UAssociation) (C : ClassName) (r : RoleName)
+  : option UAssociation :=
+  match UA with
+  | [] => None
+  | a :: assocs' =>
+      if assoc_matches_role C r a
+      then Some a
+      else
+        lookup_role_assoc assocs' C r
+  end.
+
+
+
+
+
+
+
 (*************************************************************)
 (*                关系数据库 Schema 定义                     *)
 (*************************************************************)
 
 (* 数据库列类型 *)
 Inductive ColTy : Type :=
-| TBool
-| TInt
-| TReal
-| TString
-| TOid (C : ClassName).   (* 对象标识符，指向类 C *)
+  | TBool
+  | TInt
+  | TReal
+  | TString
+  | TOid (C : ClassName).   (* 对象标识符，指向类 C *)
 
 (* 数据库列 *)
 Record Column : Type := {
@@ -113,7 +144,7 @@ Definition Schema := list TableSchema.
 (*                    命名辅助函数                           *)
 (*************************************************************)
 
-(* 将类名转为 oid 列名：类名全小写 + "_id" *)
+(* 将类名转为 oid 列名：类名 + "_id" *)
 Definition oidColName (C : ClassName) : string :=
   C ++ "_id".
 
@@ -267,15 +298,25 @@ Compute umlToSchema ExampleModel.
 (*************************************************************)
 
 (* 对象标识符 *)
-Definition Oid := nat.
+Definition Oid := string.
 
 (* 运行时值 *)
-Inductive Value : Type :=
+(* Inductive Value : Type :=
 | VInt    : Z -> Value
 | VReal   : R -> Value
 | VBool   : bool -> Value
 | VString : string -> Value
-| VOid    : Oid -> Value.
+| VOid    : Oid -> Value. *)
+
+Inductive value : Type :=
+  | V_Bool   : bool -> value
+  | V_Int    : Z -> value
+  | V_Real   : R -> value
+  | V_String : string -> value
+  | V_Object    : Oid -> value
+  | V_Bag    : list value -> value.
+
+
 
 (* 单个对象
    - 所有属性、mandatory role 都是全定义
@@ -284,7 +325,7 @@ Record Object : Type := {
   obj_class  : ClassName;
 
   (* 属性：总函数（无 null） *)
-  obj_attrs  : AttrName -> Value;
+  obj_attrs  : AttrName -> value;
 
   (* multiplicity = 1 的 role *)
   obj_role1  : RoleName -> Oid;
@@ -319,7 +360,7 @@ Record Row : Type := {
   r_schema : RowSchema;
 
   (* 只对 schema 中的列返回 Value *)
-  r_get    : ColName -> Value
+  r_get    : ColName -> option value
 }.
 
 
@@ -404,12 +445,12 @@ Definition classRow
     r_get :=
       fun col =>
         if String.eqb col (oidColName obj.(obj_class)) then
-          VOid o
+          Some (V_Object o)
+        else if in_dec string_dec col attrs then
+          Some (obj.(obj_attrs) col)
         else
-          (* 这里假设 col ∈ attrs 时才会被访问 *)
-          obj.(obj_attrs) col
+          None
   |}.
-
 
 (*************************************************************)
 (*  关系表 row 的 schema                                     *)
@@ -436,12 +477,13 @@ Definition assocRow
     r_get :=
       fun col =>
         if String.eqb col (oidColName c1) then
-          VOid o1
+          Some (V_Object o1)
         else if String.eqb col (oidColName c2) then
-          VOid o2
+          Some (V_Object o2)
         else
-          VOid 0
+          None
   |}.
+
 
 
 (*************************************************************)

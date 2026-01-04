@@ -1,0 +1,551 @@
+From Stdlib Require Import String ZArith Reals List.
+Import ListNotations.
+Open Scope string_scope.
+
+From OCL.equivalence Require Import Models OCLSyntax RASyntax. 
+
+
+
+Definition varEnv := list (var * (ra_rel * list string)).
+
+Fixpoint lookup_var (Gamma : varEnv) (x : var)
+  : option (ra_rel * list string) :=
+  match Gamma with
+  | [] => None
+  | (y, U) :: Gamma' =>
+      if String.eqb x y
+      then Some U
+      else lookup_var Gamma' x
+  end.
+
+
+
+Definition push_var
+  (x : var)
+  (U : ra_rel * list string)
+  (Gamma : varEnv)
+  : varEnv :=
+  (x, U) :: Gamma.
+
+
+
+Definition pop_var (Gamma : varEnv) : varEnv :=
+  match Gamma with
+  | [] => []
+  | _ :: Gamma' => Gamma'
+  end.
+
+
+
+
+
+Fixpoint translate_rex (M : UMLModel) (Gamma : varEnv) (t : tm) : option ra_rex := 
+    match t with
+
+    (*  字面量  *)
+    (* | CBool b =>
+        Some (RVal (V_Bool b)) *)
+    | CInt z =>
+        Some (RVal (V_Int z))
+
+    | CReal r =>
+        Some (RVal (V_Real r))
+
+    | CString s =>
+        Some (RVal (V_String s))
+
+    | CObject oid =>
+        Some (RVal (V_Object oid))
+
+
+    (*  一元操作  *)
+    | CArithUn op t1 =>
+        match translate_rex M Gamma t1 with
+        | Some e1 => Some (RArithUn op e1)
+        | None => None
+        end
+
+    | CStrUn op t1 =>
+        match translate_rex M Gamma t1 with
+        | Some e1 => Some (RStrUn op e1)
+        | None => None
+        end
+
+
+
+
+    (*  二元操作  *)
+    | CCompBin op t1 t2 =>
+        match translate_rex M Gamma t1, translate_rex M Gamma t2 with
+        | Some e1, Some e2 =>
+            Some (RComp op e1 e2)
+        | _, _ => None
+        end
+
+    | CArithBin op t1 t2 =>
+        match translate_rex M Gamma t1, translate_rex M Gamma t2 with
+        | Some e1, Some e2 =>
+            Some (RArithBin op e1 e2)
+        | _, _ => None
+        end
+
+    | CStrBin op t1 t2 =>
+        match translate_rex M Gamma t1, translate_rex M Gamma t2 with
+        | Some e1, Some e2 =>
+            Some (RStrBin op e1 e2)
+        | _, _ => None
+        end
+
+    | CAggBin op t1 t2 =>
+        match translate_rex M Gamma t1, translate_rex M Gamma t2 with
+        | Some e1, Some e2 =>
+            Some (RAggBin op e1 e2)
+        | _, _ => None
+        end
+
+
+
+    (* String ops with integer arguments *)
+    | EAt t1 i =>
+        match translate_rex M Gamma t1 with
+        | Some e1 => Some (RAt e1 i)
+        | None => None
+        end
+
+    | ESubstring t1 i j =>
+        match translate_rex M Gamma t1 with
+        | Some e1 => Some (RSubstring e1 i j)
+        | None => None
+    end
+
+
+
+    | _ =>
+        None
+    end.
+
+
+
+
+
+
+
+
+Fixpoint mapM {A B}
+  (f : A -> option B) (xs : list A) : option (list B) :=
+  match xs with
+  | [] => Some []
+  | x :: xs' =>
+      match f x, mapM f xs' with
+      | Some y, Some ys => Some (y :: ys)
+      | _, _ => None
+      end
+  end.
+
+
+Definition eval_literal (t : tm) : option value :=
+  match t with
+  | CBool b     => Some (V_Bool b)
+  | CInt z      => Some (V_Int z)
+  | CReal r     => Some (V_Real r)
+  | CString s  => Some (V_String s)
+  | CObject oid => Some (V_Object oid)
+  | _           => None
+  end.
+
+
+
+
+
+
+Fixpoint lookup_table_schema
+  (S : Schema) (t : TableName) : option TableSchema :=
+  match S with
+  | [] => None
+  | ts :: S' =>
+      if String.eqb ts.(table_name) t
+      then Some ts
+      else lookup_table_schema S' t
+  end.
+
+
+
+
+Definition row_schema_of_table_schema
+  (ts : TableSchema) : RowSchema :=
+  map col_name ts.(table_cols).
+
+
+
+
+Fixpoint schema_of (sc : Schema) (q : ra_rel) : list ColName :=
+    match q with
+    | RAEmpty =>
+            [] 
+
+    | RAValues _ =>
+        ["elem"]
+
+    | RATable t =>
+        match lookup_table_schema sc t with
+        | Some ts => row_schema_of_table_schema ts
+        | None => []
+        end
+
+    | RATableSchema ts =>
+        map col_name ts.(table_cols)
+
+    | RASelect _ q1 =>
+        schema_of sc q1
+
+    | RAProject ps _ =>
+        map proj_name ps
+
+    | RAJoin _ q1 q2 =>
+        schema_of sc q1 ++ schema_of sc q2
+
+    | RAUnion q1 _ =>
+        schema_of sc q1
+
+    | RAIntersect q1 _ =>
+        schema_of sc q1
+
+    | RADiff q1 _ =>
+        schema_of sc q1
+
+    | RADistinct q1 =>
+        schema_of sc q1
+
+    | RAAggregate gcols aggs _ =>
+        gcols ++ map (fun '(newc, _, _) => newc) aggs
+    end.
+
+
+
+
+(* 取 schema 的最后一列 *)
+Definition last_col (cols : list ColName) : option ColName :=
+match rev cols with
+| [] => None
+| c :: _ => Some c
+end.
+
+
+Definition oid_suffix : string := "_id".
+
+
+Definition ends_with_oid (s : string) : bool :=
+  let len_s := String.length s in
+  let len_suf := String.length oid_suffix in
+  if Nat.ltb len_s len_suf then
+    false
+  else
+    String.eqb
+      (String.substring (len_s - len_suf) len_suf s)
+      oid_suffix.
+
+
+Definition remove_oid_suffix (s : string) : string :=
+    let len_s := String.length s in
+    let len_suf := String.length oid_suffix in
+    String.substring 0 (len_s - len_suf) s.
+
+
+Definition infer_class_from_schema_cols
+    (cols : list ColName) : option ClassName :=
+    match last_col cols with
+    | None => None
+    | Some c =>
+        if ends_with_oid c then
+          Some (remove_oid_suffix c)
+        else
+          None
+    end.
+
+Definition infer_class_from_schema (sc : Schema) (q : ra_rel) : option ClassName :=
+    infer_class_from_schema_cols (schema_of sc q).
+
+
+Definition groupkey := list string.
+
+
+
+
+
+
+Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel * groupkey) := 
+    match t with
+
+    (*  集合（Bag） *)
+    | CEmptyBag ty =>
+        Some (RAEmpty, [])
+
+    | CBagLiteral ts =>
+        match mapM eval_literal ts with
+        | Some vs => Some ((RAValues vs), [])
+        | None => None
+        end
+
+
+    (*  Var Self  *)
+    | CVar x =>
+        match lookup_var Gamma x with
+        | Some U => Some U
+        | None => None
+        end
+
+    | CSelf =>
+        match lookup_var Gamma "self" with
+        | Some U => Some U
+        | None => None
+        end
+
+
+    (*  对象 / 属性 / 角色  *)
+    | CAttr tm attr  =>
+
+        match translate_rel M Gamma tm with
+        | None => None
+        | Some (qObj, gks) =>
+            (* 假设你能从 qObj 的 schema 中确定 C *)
+            match infer_class_from_schema (umlToSchema M) qObj with
+            | None => None
+            | Some C =>
+                let oid := oidColName C in
+                let qClass := RATable C in
+
+                let qR :=
+                    RAProject
+                    [ {| proj_expr := RCol oid;  proj_name := "oid_r" |}
+                    ; {| proj_expr := RCol attr; proj_name := attr   |}
+                    ]
+                    qClass
+                    in
+                let qJ := 
+                    RAJoin
+                    (RComp BEq (RCol oid) (RCol "oid_r"))
+                    qObj qR
+                    in
+
+                Some
+                    (RAProject
+                        ( map
+                            (fun c =>
+                               {| proj_expr := RCol c;       proj_name := c   |})
+                            (schema_of (umlToSchema M) qObj)
+                            ++
+                            [{| proj_expr := RCol attr; proj_name := attr |}]
+                        )
+                        qJ 
+                        , gks )
+
+            end
+        end
+
+
+    | CRole tm role =>
+        match translate_rel M Gamma tm with
+        | None => None
+        | Some (qObj, gks) =>
+            (* 从对象集合 qObj 的最后一列 oid 推断所属类 C *)
+            match infer_class_from_schema (umlToSchema M) qObj with
+            | None => None
+            | Some C =>
+                (* 在 UMLModel 中查找 (C, role) 对应的关联 *)
+                match lookup_role_assoc M.(uml_assocs) C role with
+                | None => None
+                | Some A =>
+                    let oidC := oidColName C in
+                    let D    := A.(assoc_c2) in
+                    let oidD := oidColName D in
+    
+                    (* 关联表 *)
+                    let qAssoc := RATable (assoc_name A) in
+
+                    (* 右侧：关联表，仅保留两端 oid，并将 C 端 oid 重命名为 oid_r *)
+                    let qR :=
+                      RAProject
+                        [ {| proj_expr := RCol oidC; proj_name := "oid_r" |}
+                        ; {| proj_expr := RCol oidD; proj_name := oidD    |}
+                        ]
+                        qAssoc
+                    in
+    
+                    (* 按 C 端 oid 等值连接 *)
+                    let qJ :=
+                      RAJoin
+                        (RComp BEq (RCol oidC) (RCol "oid_r"))
+                        qObj qR
+                    in
+    
+                    Some
+                    (RAProject
+                       (
+                         (* 左表原有列全部保留 *)
+                         map
+                           (fun c =>
+                              {| proj_expr := RCol c; proj_name := c |})
+                              (schema_of (umlToSchema M) qObj)
+                         ++
+                         (* 追加右表目标端 oid *)
+                         [{| proj_expr := RCol oidD; proj_name := oidD |}]
+                       )
+                       qJ 
+                       , gks )
+                end
+            end
+        end
+    
+
+    (* 
+        遇到nrole时，将nrole前的rel的所有列作为groupkey记录下来。
+        nrole只会发生在obj对象上产生bag，因此后续若进行agg操作，语义是以obj为分组进行agg。
+        若在rel->collect(nrole)操作中使用了nrole，此时是对rel集合取nrole的集合
+        并进行flatten（见手册11.9.1中对collect操作的语义说明），因此groupkey不变。
+    *)
+    | CNRole tm nrole =>
+        match translate_rel M Gamma tm with
+        | None => None
+        | Some (qObj, gks) =>
+            (* 从对象集合 qObj 的最后一列 oid 推断所属类 C *)
+            match infer_class_from_schema (umlToSchema M) qObj with
+            | None => None
+            | Some C =>
+                (* 在 UMLModel 中查找 (C, nrole) 对应的关联 *)
+                match lookup_role_assoc M.(uml_assocs) C nrole with
+                | None => None
+                | Some A =>
+                    let oidC := oidColName C in
+                    let D    := A.(assoc_c2) in
+                    let oidD := oidColName D in
+
+                    (* 关联表 *)
+                    let qAssoc := RATable (assoc_name A) in
+
+                    (* 右侧：关联表，仅保留两端 oid，并将 C 端 oid 重命名为 oid_r *)
+                    let qR :=
+                        RAProject
+                        [ {| proj_expr := RCol oidC; proj_name := "oid_r" |}
+                        ; {| proj_expr := RCol oidD; proj_name := oidD    |}
+                        ]
+                        qAssoc
+                    in
+
+                    (* 按 C 端 oid 等值连接（1:n 展开点） *)
+                    let qJ :=
+                        RAJoin
+                        (RComp BEq (RCol oidC) (RCol "oid_r"))
+                        qObj qR
+                    in
+
+                    let qOut :=
+                        RAProject
+                        (
+                            (* 左表原有列全部保留 *)
+                            map
+                            (fun c =>
+                                {| proj_expr := RCol c; proj_name := c |})
+                            (schema_of (umlToSchema M) qObj)
+                            ++
+                            (* 追加右表目标端 oid（nrole 的结果） *)
+                            [{| proj_expr := RCol oidD; proj_name := oidD |}]
+                        )
+                        qJ
+                    in
+
+                    Some (qOut, schema_of (umlToSchema M) qObj)
+                end
+            end
+        end
+
+(* 
+
+    (*  allInstances  *)
+    | CAllInstances  =>
+        None
+
+    (*  一元操作  *)
+    | CBoolUn  =>
+        None
+
+
+    (*  二元操作  *)
+    | CBoolBin  =>
+        None
+
+
+
+    (*  Bag 运算  *)
+    | CUnion  =>
+        None
+
+    | CIntersect  =>
+        None
+
+    | CDifference  =>
+        None
+
+    | CSymDiff  =>
+        None
+
+
+
+    (*  Bag 谓词  *)
+    | CIncludesAll  =>
+        None
+
+    | CExcludesAll  =>
+        None
+
+    | CIncludes  =>
+        None
+
+    | CExcludes  =>
+        None
+
+    | CIsEmpty  =>
+        None
+
+    | CNotEmpty  =>
+        None
+        
+    | CIsUnique  =>
+        None
+
+
+    (*  Iterator *)
+
+    | CForAll  =>
+        None
+
+    | CExists  =>
+        None
+
+    | CSelect  =>
+        None
+
+    | CReject  =>
+        None
+
+    | COne  =>
+        None
+
+    | CCollect  =>
+        None
+
+    | CRCollect  =>
+        None
+
+    | CNRCollect  =>
+        None
+
+
+    (*  bag聚合  *)
+    | EAggregate : aggop -> tm -> tm 
+ *)
+
+
+
+    | _ =>
+        None
+    end.

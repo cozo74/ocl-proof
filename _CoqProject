@@ -5,3 +5,13 @@ src/type/Syntax.v
 src/type/Utils.v
 src/type/Semantic.v
 src/type/Typing.v
+
+src/equivalence/Models.v
+
+src/equivalence/OCLSyntax.v
+src/equivalence/OCLSemantic.v
+
+src/equivalence/RASyntax.v
+src/equivalence/RASemantic.v
+
+src/equivalence/Utils.v
