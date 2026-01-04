@@ -201,6 +201,9 @@ Fixpoint schema_of (sc : Schema) (q : ra_rel) : list ColName :=
     | RAProject ps _ =>
         map proj_name ps
 
+    | RACartesian q1 q2 => 
+        schema_of sc q1 ++ schema_of sc q2
+
     | RAJoin _ q1 q2 =>
         schema_of sc q1 ++ schema_of sc q2
 
@@ -267,6 +270,44 @@ Definition infer_class_from_schema (sc : Schema) (q : ra_rel) : option ClassName
 
 
 Definition groupkey := list string.
+
+
+Definition proj_cols (cs : list string)
+  : list RAProjItem :=
+  map
+    (fun c =>
+       {| proj_expr := RCol c
+        ; proj_name := c |})
+    cs.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -458,37 +499,375 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
             end
         end
 
-(* 
+
 
     (*  allInstances  *)
-    | CAllInstances  =>
-        None
+    (* 转换规则为，从class表中投影出oid列，groupkey为空 *)
+    | CAllInstances class =>
+        let oid := oidColName class in
+        let qClass := RATable class in
+        Some
+        ( RAProject
+            [ {| proj_expr := RCol oid; proj_name := oid |} ]
+            qClass
+        , [] (* groupkey 为空 *)
+        )
 
-    (*  一元操作  *)
-    | CBoolUn  =>
-        None
+
+      
+    (*  一元布尔操作  *)
+    (* 操作逻辑为，找出varEnv顶端的var对应的全集，用全集和当前tm对应的ra_rel进行差集操作，groupkey为空 *)
+    | CBoolUn op tm =>
+        match op with
+        | UNot =>
+            (* 先翻译子表达式 *)
+            match translate_rel M Gamma tm with
+            | None => None
+            | Some (qTrue, _) =>
+                (* 取当前上下文的全集（varEnv 栈顶） *)
+                match Gamma with
+                | [] => None
+                | (_, (qAll, _)) :: _ =>
+                    (* 差集：全集 - 满足 tm 的集合 *)
+                    Some
+                    ( RADiff qAll qTrue
+                    , []   (* 布尔结果不携带 groupkey *)
+                    )
+                end
+            end
+        end
 
 
-    (*  二元操作  *)
-    | CBoolBin  =>
-        None
+
+    (*  二元布尔操作  *)
+    | CBoolBin op t1 t2 =>
+        match translate_rel M Gamma t1,
+            translate_rel M Gamma t2 with
+        | Some (q1, _), Some (q2, _) =>
+            match op with
+            | BAnd =>
+                (* a and b  ≡  a ∩ b *)
+                Some ( RAIntersect q1 q2
+                    , [] )
+
+            | BOr  =>
+                (* a or b   ≡  a ∪ b *)
+                Some ( RAUnion q1 q2
+                    , [] )
+
+            | BXor =>
+                (* a xor b = (a − b) ∪ (b − a) *)
+                let qAminusB := RADiff q1 q2 in
+                let qBminusA := RADiff q2 q1 in
+                Some ( RAUnion qAminusB qBminusA
+                        , [] )
+
+            | BImplies =>
+                (* a implies b  ≡  (not a) or b *)
+                (*             ≡  (All − a) ∪ b *)
+                match Gamma with
+                | [] => None
+                | (_, (qAll, _)) :: _ =>
+                    let qNotA := RADiff qAll q1 in
+                    Some ( RAUnion qNotA q2
+                        , [] )
+                end
+            end
+        | _, _ => None
+        end
+
 
 
 
     (*  Bag 运算  *)
-    | CUnion  =>
-        None
+    (*  Bag union  *)
+    | CUnion t1 t2 =>
+        match translate_rel M Gamma t1,
+            translate_rel M Gamma t2 with
+        | Some (q1, gk1), Some (q2, gk2) =>
 
-    | CIntersect  =>
-        None
+            match gk1, gk2 with
+            | [], [] =>
+                (* 情况 1：[] × [] *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    Some
+                        ( RAUnion
+                            (RAProject [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1)
+                            (RAProject [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2)
+                        , [] )
+                | _, _ =>
+                    None
+                end
 
-    | CDifference  =>
-        None
+            | [], GK =>
+            (* 情况 2：[] × GK *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    let qGK := RAProject (proj_cols GK) q2 in
+                    let qS  := RAProject [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1 in
+                    let qLift := RACartesian qGK qS in
+                    let qG := RAProject (proj_cols (GK ++ [v2])) q2 in
+                    Some ( RAUnion qLift qG
+                        , GK )
+                | _, _ =>
+                    None
+                end
+            | GK, [] =>
+            (* 情况 3：GK × [] *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    let qGK := RAProject (proj_cols GK) q1 in
+                    let qS  := RAProject [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2 in
+                    let qLift := RACartesian qGK qS in
+                    let qG := RAProject (proj_cols (GK ++ [v1])) q1 in
+                    Some ( RAUnion qG qLift
+                        , GK )
+                | _, _ =>
+                    None
+                end
+            | GK, _ =>
+            (* 情况 4：GK1 × GK2 *)
+                (* 假设 gk1 = gk2 *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    Some
+                        ( RAUnion
+                            (RAProject (proj_cols (GK ++ [v1])) q1)
+                            (RAProject (proj_cols (GK ++ [v2])) q2)
+                        , GK )
+                | _, _ =>
+                    None
+                end
+            end
+        | _, _ => None
+        end
 
-    | CSymDiff  =>
-        None
+
+    (*  Bag intersect  *)
+    | CIntersect t1 t2  =>
+        match translate_rel M Gamma t1,
+            translate_rel M Gamma t2 with
+        | Some (q1, gk1), Some (q2, gk2) =>
+
+            match gk1, gk2 with
+            | [], [] =>
+                (* 情况 1：[] × [] *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    Some
+                        ( RAIntersect
+                            (RAProject [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1)
+                            (RAProject [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2)
+                        , [] )
+                | _, _ =>
+                    None
+                end
+
+            | [], GK =>
+            (* 情况 2：[] × GK *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    let qGK := RAProject (proj_cols GK) q2 in
+                    let qS  := RAProject [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1 in
+                    let qLift := RACartesian qGK qS in
+                    let qG := RAProject (proj_cols (GK ++ [v2])) q2 in
+                    Some ( RAIntersect qLift qG
+                        , GK )
+                | _, _ =>
+                    None
+                end
+            | GK, [] =>
+            (* 情况 3：GK × [] *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    let qGK := RAProject (proj_cols GK) q1 in
+                    let qS  := RAProject [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2 in
+                    let qLift := RACartesian qGK qS in
+                    let qG := RAProject (proj_cols (GK ++ [v1])) q1 in
+                    Some ( RAIntersect qG qLift
+                        , GK )
+                | _, _ =>
+                    None
+                end
+            | GK, _ =>
+            (* 情况 4：GK1 × GK2 *)
+                (* 假设 gk1 = gk2 *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    Some
+                        ( RAIntersect
+                            (RAProject (proj_cols (GK ++ [v1])) q1)
+                            (RAProject (proj_cols (GK ++ [v2])) q2)
+                        , GK )
+                | _, _ =>
+                    None
+                end
+            end
+        | _, _ => None
+        end
 
 
+
+    (*  Bag difference  *)
+    | CDifference t1 t2  =>
+        match translate_rel M Gamma t1,
+            translate_rel M Gamma t2 with
+        | Some (q1, gk1), Some (q2, gk2) =>
+
+            match gk1, gk2 with
+            | [], [] =>
+                (* 情况 1：[] × [] *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    Some
+                        ( RADiff
+                            (RAProject [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1)
+                            (RAProject [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2)
+                        , [] )
+                | _, _ =>
+                    None
+                end
+
+            | [], GK =>
+            (* 情况 2：[] × GK *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    let qGK := RAProject (proj_cols GK) q2 in
+                    let qS  := RAProject [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1 in
+                    let qLift := RACartesian qGK qS in
+                    let qG := RAProject (proj_cols (GK ++ [v2])) q2 in
+                    Some ( RADiff qLift qG
+                        , GK )
+                | _, _ =>
+                    None
+                end
+            | GK, [] =>
+            (* 情况 3：GK × [] *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    let qGK := RAProject (proj_cols GK) q1 in
+                    let qS  := RAProject [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2 in
+                    let qLift := RACartesian qGK qS in
+                    let qG := RAProject (proj_cols (GK ++ [v1])) q1 in
+                    Some ( RADiff qG qLift
+                        , GK )
+                | _, _ =>
+                    None
+                end
+            | GK, _ =>
+            (* 情况 4：GK1 × GK2 *)
+                (* 假设 gk1 = gk2 *)
+                match last_col (schema_of (umlToSchema M) q1),
+                last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    Some
+                        ( RADiff
+                            (RAProject (proj_cols (GK ++ [v1])) q1)
+                            (RAProject (proj_cols (GK ++ [v2])) q2)
+                        , GK )
+                | _, _ =>
+                    None
+                end
+            end
+        | _, _ => None
+        end
+
+
+
+    | CSymDiff t1 t2 =>
+        match translate_rel M Gamma t1,
+              translate_rel M Gamma t2 with
+        | Some (q1, gk1), Some (q2, gk2) =>
+    
+            match gk1, gk2 with
+            | [], [] =>
+                (* 单集合 xor *)
+                match last_col (schema_of (umlToSchema M) q1),
+                      last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    let q12 :=
+                      RADiff
+                        (RAProject
+                           [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1)
+                        (RAProject
+                           [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2)
+                    in
+                    let q21 :=
+                      RADiff
+                        (RAProject
+                           [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2)
+                        (RAProject
+                           [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1)
+                    in
+                    Some (RAUnion q12 q21, [])
+                | _, _ => None
+                end
+    
+            | [], GK =>
+                (* [] × GK *)
+                match last_col (schema_of (umlToSchema M) q1),
+                      last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    let qGK   := RAProject (proj_cols GK) q2 in
+                    let qS    := RAProject
+                                   [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1 in
+                    let qLift := RACartesian qGK qS in
+                    let qG    := RAProject (proj_cols (GK ++ [v2])) q2 in
+    
+                    let q12 := RADiff qLift qG in
+                    let q21 := RADiff qG qLift in
+                    Some (RAUnion q12 q21, GK)
+                | _, _ => None
+                end
+    
+            | GK, [] =>
+                (* GK × []，对称 *)
+                match last_col (schema_of (umlToSchema M) q1),
+                      last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    let qGK   := RAProject (proj_cols GK) q1 in
+                    let qS    := RAProject
+                                   [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2 in
+                    let qLift := RACartesian qGK qS in
+                    let qG    := RAProject (proj_cols (GK ++ [v1])) q1 in
+    
+                    let q12 := RADiff qG qLift in
+                    let q21 := RADiff qLift qG in
+                    Some (RAUnion q12 q21, GK)
+                | _, _ => None
+                end
+    
+            | GK, _ =>
+                (* GK × GK *)
+                match last_col (schema_of (umlToSchema M) q1),
+                      last_col (schema_of (umlToSchema M) q2) with
+                | Some v1, Some v2 =>
+                    let q1' := RAProject (proj_cols (GK ++ [v1])) q1 in
+                    let q2' := RAProject (proj_cols (GK ++ [v2])) q2 in
+                    let q12 := RADiff q1' q2' in
+                    let q21 := RADiff q2' q1' in
+                    Some (RAUnion q12 q21, GK)
+                | _, _ => None
+                end
+            end
+        | _, _ => None
+        end
+    
+
+
+(* 
 
     (*  Bag 谓词  *)
     | CIncludesAll  =>

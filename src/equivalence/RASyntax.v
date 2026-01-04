@@ -81,44 +81,48 @@ Record RAProjItem : Type := {
 
 Inductive ra_rel : Type :=
 
-(* 空关系 *)
-| RAEmpty : ra_rel
+  (* 空关系 *)
+  | RAEmpty : ra_rel
 
-(* 常量关系 (single bag) *)
-| RAValues : list value -> ra_rel
+  (* 常量关系 (single bag) *)
+  | RAValues : list value -> ra_rel
 
-(* 表扫描 *)
-| RATable  : TableName -> ra_rel
-(* 语义：直接从 TableSchema 中读取该表 *)
-
-
-(* 从TableSchema构建一个表 *)
-| RATableSchema : TableSchema -> ra_rel
+  (* 表扫描 *)
+  | RATable  : TableName -> ra_rel
+  (* 语义：直接从 TableSchema 中读取该表 *)
 
 
-(* 选择 σ *)
-| RASelect : ra_rex -> ra_rel -> ra_rel
-(* 语义：保留满足条件的行 *)
+  (* 从TableSchema构建一个表 *)
+  | RATableSchema : TableSchema -> ra_rel
 
-(* 投影 π *)
-| RAProject : list RAProjItem -> ra_rel -> ra_rel
-(* 语义：对每一行计算新列并生成新 schema *)
 
-(* 内连接 ⋈ *)
-| RAJoin   : ra_rex -> ra_rel -> ra_rel -> ra_rel
-(* 语义：笛卡尔积 + 条件过滤（inner join） *)
+  (* 选择 σ *)
+  | RASelect : ra_rex -> ra_rel -> ra_rel
+  (* 语义：保留满足条件的行 *)
 
-(* 并、差（Bag 语义） *)
-| RAUnion  : ra_rel -> ra_rel -> ra_rel
-| RAIntersect  : ra_rel -> ra_rel -> ra_rel
-| RADiff   : ra_rel -> ra_rel -> ra_rel
+  (* 投影 π *)
+  | RAProject : list RAProjItem -> ra_rel -> ra_rel
+  (* 语义：对每一行计算新列并生成新 schema *)
 
-(* 去重（可选，用于 IsUnique / 集合语义） *)
-| RADistinct : ra_rel -> ra_rel
+  (* 笛卡尔积 *)
+  | RACartesian : ra_rel -> ra_rel -> ra_rel
 
-(* 分组与聚合 γ *)
-| RAAggregate :
-    list ColName ->                      (* group by 列 *)
-    list (ColName * aggop * ColName) ->  (* newCol := agg(op, col) *)
-    ra_rel -> ra_rel.
+
+  (* 内连接 ⋈ *)
+  | RAJoin   : ra_rex -> ra_rel -> ra_rel -> ra_rel
+  (* 语义：笛卡尔积 + 条件过滤（inner join） *)
+
+  (* 并、差（Bag 语义） *)
+  | RAUnion  : ra_rel -> ra_rel -> ra_rel
+  | RAIntersect  : ra_rel -> ra_rel -> ra_rel
+  | RADiff   : ra_rel -> ra_rel -> ra_rel
+
+  (* 去重（可选，用于 IsUnique / 集合语义） *)
+  | RADistinct : ra_rel -> ra_rel
+
+  (* 分组与聚合 γ *)
+  | RAAggregate :
+      list ColName ->                      (* group by 列 *)
+      list (ColName * aggop * ColName) ->  (* newCol := agg(op, col) *)
+      ra_rel -> ra_rel.
 

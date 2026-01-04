@@ -313,6 +313,28 @@ Definition values_row (v : value) : Row :=
         else None
   |}.
 
+
+
+
+(*************************************************************)
+(* 笛卡尔积中的行合并关系                                   *)
+(*                                                           *)
+(*  r' 是由 r1 与 r2 通过 row_merge 得到的行                 *)
+(*************************************************************)
+Inductive cartesian_rowR : Row -> Row -> Row -> Prop :=
+| CartesianRow_intro :
+    forall r1 r2,
+      cartesian_rowR r1 r2 (row_merge r1 r2).
+
+
+
+
+
+
+
+
+
+
 (*************************************************************)
 (*                                                           *)
 (*      Relational Algebra Big-step Semantics (Relation)     *)
@@ -415,6 +437,37 @@ Inductive evalRAR : DBInstance -> ra_rel -> TableInst -> Prop :=
            project_rowR ps r r') ->
 
       evalRAR db (RAProject ps q) rows'
+
+
+
+(*************************************************************)
+(* 笛卡尔积：RACartesian                                     *)
+(*                                                           *)
+(*  对输入表 rows1 与 rows2，输出所有 r1++r2                  *)
+(*  cartesian_rowR 描述“(r1,r2) 生成输出行 r'”                *)
+(*************************************************************)
+| ER_Cartesian :
+    forall db q1 q2 rows1 rows2 rows',
+      evalRAR db q1 rows1 ->
+      evalRAR db q2 rows2 ->
+
+      (* 每一个输入对 (r1,r2) 都能生成某个输出行 r' *)
+      (forall r1 r2,
+         In r1 rows1 ->
+         In r2 rows2 ->
+         exists r',
+           cartesian_rowR r1 r2 r' /\
+           In r' rows') ->
+
+      (* 每一个输出行 r' 都来自某个输入对 (r1,r2) *)
+      (forall r',
+         In r' rows' ->
+         exists r1 r2,
+           In r1 rows1 /\
+           In r2 rows2 /\
+           cartesian_rowR r1 r2 r') ->
+
+      evalRAR db (RACartesian q1 q2) rows'
 
 
 (*************************************************************)
