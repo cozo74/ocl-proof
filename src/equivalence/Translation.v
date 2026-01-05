@@ -960,7 +960,7 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
                     (* 取当前上下文对象集合 *)
                     match Gamma with
-                    | (_, (qCtx, _)) :: _ =>
+                    | (_, (qCtx, ctxGK)) :: _ =>
 
                         (* scalarQuery 模式：
                         if EXISTS(qCond) then qCtx else ∅ *)
@@ -969,7 +969,7 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
                             qCtx
                             (RADiff qCtx qExists)
                         in
-                        Some (qRes, [])
+                        Some (qRes, ctxGK)
                     | _ => None
                     end
 
@@ -1204,10 +1204,10 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
                     (* if NOT EXISTS(A ∩ B) then qCtx else ∅ *)
                     match Gamma with
-                    | (_, (qCtx, _)) :: _ =>
+                    | (_, (qCtx, ctxGK)) :: _ =>
                         Some
                         ( RADiff qCtx qExists
-                        , [] )
+                        , ctxGK )
                     | _ => None
                     end
 
@@ -1244,12 +1244,12 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
                     (* 所有分组 *)
                     let qAllGK :=
-                    RAProject (proj_cols GK) qB
+                    RADistinct (RAProject (proj_cols GK) qB)
                     in
 
                     (* 与 A 有交集的分组 *)
                     let qHitGK :=
-                    RAProject (proj_cols GK) qJoin
+                    RADistinct (RAProject (proj_cols GK) qJoin)
                     in
 
                     (* 不与 A 有交集的分组 *)
@@ -1286,11 +1286,11 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
                     in
 
                     let qAllGK :=
-                    RAProject (proj_cols GK) qA
+                    RADistinct (RAProject (proj_cols GK) qA)
                     in
 
                     let qHitGK :=
-                    RAProject (proj_cols GK) qJoin
+                    RADistinct (RAProject (proj_cols GK) qJoin)
                     in
 
                     Some (RADiff qAllGK qHitGK, GK)
@@ -1332,11 +1332,11 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
                     in
 
                     let qAllGK :=
-                    RAProject (proj_cols GK) qA
+                    RADistinct (RAProject (proj_cols GK) qA)
                     in
 
                     let qHitGK :=
-                    RAProject (proj_cols GK) qJoin
+                    RADistinct (RAProject (proj_cols GK) qJoin)
                     in
 
                     Some (RADiff qAllGK qHitGK, GK)
@@ -1379,11 +1379,11 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
                     (* if EXISTS(qCond) then qCtx else ∅ *)
                     match Gamma with
-                    | (_, (qCtx, _)) :: _ =>
+                    | (_, (qCtx, ctxGK)) :: _ =>
                         let qRes :=
                         RADiff qCtx (RADiff qCtx qExists)
                         in
-                        Some (qRes, [])
+                        Some (qRes, ctxGK)
                     | _ => None
                     end
 
@@ -1406,7 +1406,7 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
                     (* 直接投影出 GK：存在即满足 *)
                     let qRes :=
-                    RAProject (proj_cols GK) qFilter
+                    RADistinct (RAProject (proj_cols GK) qFilter)
                     in
 
                     Some (qRes, GK)
@@ -1423,9 +1423,7 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
         match translate_rel M Gamma t1,
         translate_rex M Gamma t2 with
         | Some (qA, gkA), Some rLit =>
-
             match gkA with
-
 
             (* 1) 单个集合 × literal/标量表达式                          *)
             (*    若集合中存在 elem = rLit，则返回当前上下文全集，否则空 *)
@@ -1446,11 +1444,11 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
                     (* if EXISTS(qCond) then qCtx else ∅ *)
                     match Gamma with
-                    | (_, (qCtx, _)) :: _ =>
+                    | (_, (qCtx, ctxGK)) :: _ =>
                         let qRes :=
                         RADiff qCtx qExists
                         in
-                        Some (qRes, [])
+                        Some (qRes, ctxGK)
                     | _ => None
                     end
 
@@ -1461,34 +1459,36 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
             (* 2) 分组集合 × literal/标量表达式                          *)
             (*    返回不包含该 literal 的分组 GK                            *)
             | GK =>
-            match last_col (schema_of (umlToSchema M) qA) with
-            | Some vA =>
-        
-                (* filter: elem = rLit *)
-                let qFilter :=
-                  RASelect
-                    (RComp BEq (RCol vA) rLit)
-                    qA
-                in
-        
-                (* 所有分组 GK（全集） *)
-                let qAllGK :=
-                  RAProject (proj_cols GK) qA
-                in
-        
-                (* 命中 literal 的分组 GK *)
-                let qHitGK :=
-                  RAProject (proj_cols GK) qFilter
-                in
-        
-                (* 不包含 literal 的分组：All \ Hit *)
-                let qRes :=
-                  RADiff qAllGK qHitGK
-                in
-        
-                Some (qRes, GK)
-        
-            | None => None
+                match last_col (schema_of (umlToSchema M) qA) with
+                | Some vA =>
+            
+                    (* filter: elem = rLit *)
+                    let qFilter :=
+                    RASelect
+                        (RComp BEq (RCol vA) rLit)
+                        qA
+                    in
+            
+                    (* 所有分组 GK（全集） *)
+                    let qAllGK :=
+                    RADistinct (RAProject (proj_cols GK) qA)
+                    in
+            
+                    (* 命中 literal 的分组 GK *)
+                    let qHitGK :=
+                    RADistinct (RAProject (proj_cols GK) qFilter)
+                    in
+            
+                    (* 不包含 literal 的分组：All \ Hit *)
+                    let qRes :=
+                    RADiff qAllGK qHitGK
+                    in
+            
+                    Some (qRes, GK)
+            
+                | None => None
+                end
+
             end
         
 
@@ -1511,10 +1511,10 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
     
                 (* if NOT EXISTS(qA) then qCtx else ∅ *)
                 match Gamma with
-                | (_, (qCtx, _)) :: _ =>
+                | (_, (qCtx, ctxGK)) :: _ =>
                     Some
                       ( RADiff qCtx qExists
-                      , [] )
+                      , ctxGK )
                 | _ => None
                 end
     
@@ -1526,12 +1526,12 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
                     (* 所有上下文中的分组 *)
                     let qAllGK :=
-                    RAProject (proj_cols GK) qCtx
+                    RADistinct (RAProject (proj_cols GK) qCtx)
                     in
 
                     (* 实际出现过元素的分组 *)
                     let qNonEmptyGK :=
-                    RAProject (proj_cols GK) qA
+                    RADistinct (RAProject (proj_cols GK) qA)
                     in
 
                     (* 空分组 *)
@@ -1545,7 +1545,7 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
     
         | _ => None
         end
-    
+
 
 
         
@@ -1560,10 +1560,10 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
             | [] =>
                 let qExists := RAProject [] qA in
                 match Gamma with
-                | (_, (qCtx, _)) :: _ =>
+                | (_, (qCtx, ctxGK)) :: _ =>
                     Some
                       ( RADiff qCtx (RADiff qCtx qExists)
-                      , [] )
+                      , ctxGK )
                 | _ => None
                 end
     
@@ -1571,14 +1571,18 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
             | GK =>
                 (* 只要分组在 qA 中出现过，即为 notEmpty *)
                 let qRes :=
-                  RAProject (proj_cols GK) qA
+                  RADistinct (RAProject (proj_cols GK) qA)
                 in
                 Some (qRes, GK)
             end
     
         | _ => None
         end
-    
+
+
+
+
+
 
     | CIsUnique tm =>
         match translate_rel M Gamma tm with
@@ -1618,13 +1622,14 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
     
                 (* if unique then ctx else ∅ *)
                 match Gamma with
-                | (_, (qCtx, _)) :: _ =>
+                | (_, (qCtx, ctxGK)) :: _ =>
                     Some
                       ( RADiff qCtx (RADiff qCtx qExists)
-                      , [] )
+                      , ctxGK )
                 | _ => None
                 end
-    
+            | _ => None
+            end
         | Some (qA, GK) =>
             match last_col (schema_of (umlToSchema M) qA) with
             | Some vA =>
@@ -1665,7 +1670,7 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
                     (* 返回满足 isUnique 的分组 *)
                     Some
-                    ( RAProject (proj_cols GK) qJoin
+                    ( RADistinct (RAProject (proj_cols GK) qJoin)
                     , GK )
                 end
 
@@ -1676,26 +1681,322 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
         | None => None
         end
+
+
+
+
+
+
+
+
+
+
+    (*  Iterator *)
+    | CForAll t1 var t2 =>
+        match translate_rel M Gamma t1 with
+        | Some (qSet, []) =>
+    
+            let Gamma' := push_var var (qSet, []) Gamma in
+    
+            match translate_rel M Gamma' t2 with
+            | Some (qBool, []) =>
+    
+                match
+                last_col (schema_of (umlToSchema M) qBool),
+                last_col (schema_of (umlToSchema M) qSet)
+                with
+                | Some vBool, Some vSet =>
+    
+                    (* |pred_true| *)
+                    let qBoolCnt :=
+                    RAAggregate
+                        []
+                        [("b_count", AggSize, vBool)]
+                        qBool
+                    in
+    
+                    (* |set| *)
+                    let qSetCnt :=
+                    RAAggregate
+                        []
+                        [("s_count", AggSize, vSet)]
+                        qSet
+                    in
+    
+                    (* b_count = s_count *)
+                    let qCond :=
+                    RASelect
+                        (RComp BEq (RCol "b_count") (RCol "s_count"))
+                        (RACartesian qBoolCnt qSetCnt)
+                    in
+    
+                    let qExists := RAProject [] qCond in
+    
+                    match Gamma with
+                    | (_, (qCtx, ctxGK)) :: _ =>
+                        Some (RADiff qCtx (RADiff qCtx qExists), ctxGK)
+                    | _ => None
+                    end
+    
+                | _, _ => None
+                end
+    
+            | _ => None
+            end
+
+
+        | Some (qSet, GK) =>
+
+            let Gamma' := push_var var (qSet, GK) Gamma in
+      
+            match translate_rel M Gamma' t2 with
+            | Some (qBool, GK) =>
+      
+                match
+                  last_col (schema_of (umlToSchema M) qBool),
+                  last_col (schema_of (umlToSchema M) qSet),
+                  mk_cols_join_cond GK
+                with
+                | Some vBool, Some vSet, Some gkCond =>
+      
+                    (* |pred_true[g]| *)
+                    let qBoolCnt :=
+                      RAAggregate
+                        GK
+                        [("b_count", AggSize, vBool)]
+                        qBool
+                    in
+      
+                    (* |set[g]| *)
+                    let qSetCnt :=
+                      RAAggregate
+                        GK
+                        [("s_count", AggSize, vSet)]
+                        qSet
+                    in
+      
+                    let qCond :=
+                      RBoolBin BAnd
+                        gkCond
+                        (RComp BEq (RCol "b_count") (RCol "s_count"))
+                    in
+      
+                    let qJoin :=
+                      RAJoin qCond qBoolCnt qSetCnt
+                    in
+
+                    Some
+                    ( RADistinct
+                        (RAProject (proj_cols GK) qJoin)
+                    , GK )
+
+      
+                | _, _, _ => None
+                end
+      
+            | _ => None
+            end
+    
+        | _ => None
+        end
+
+
+    | CExists t1 var t2 =>
+        match translate_rel M Gamma t1 with
+        | Some (qSet, []) =>
+    
+            (* push scope: var ↦ qSet *)
+            let Gamma' := push_var var (qSet, []) Gamma in
+    
+            match translate_rel M Gamma' t2 with
+            | Some (qBool, []) =>
+    
+                match last_col (schema_of (umlToSchema M) qBool) with
+                | Some vBool =>
+    
+                    (* EXISTS(qBool) *)
+                    let qExists := RAProject [] qBool in
+    
+                    (* if exists then ctx else ∅ *)
+                    match Gamma with
+                    | (_, (qCtx, ctxGK)) :: _ =>
+                        Some (RADiff qCtx (RADiff qCtx qExists), ctxGK)
+                    | _ => None
+                    end
+    
+                | None => None
+                end
+    
+            | _ => None
+            end
+    
+    
+        | Some (qSet, GK) =>
+    
+            (* push scope: var ↦ qSet *)
+            let Gamma' := push_var var (qSet, GK) Gamma in
+    
+            match translate_rel M Gamma' t2 with
+            | Some (qBool, GK) =>
+    
+                match last_col (schema_of (umlToSchema M) qBool) with
+                | Some vBool =>
+                    (* 返回满足 exists 的分组 *)
+                    Some
+                    ( RADistinct
+                        (RAProject (proj_cols GK) qBool)
+                    , GK )
+                  
+                | None => None
+                end
+    
+            | _ => None
+            end
+    
+        | _ => None
+        end
     
 
+
+        
+    | CSelect t1 var t2 =>
+        match translate_rel M Gamma t1 with
+        | Some (qSet, GK) =>
+    
+            (* push scope: var ↦ qSet *)
+            let Gamma' := push_var var (qSet, GK) Gamma in
+    
+            match translate_rel M Gamma' t2 with
+            | Some (qBool, GK') =>
+    
+                (* 语义约束（设计不变式）：
+                   - qBool 与 qSet schema 相同
+                   - GK' = GK
+                   在翻译阶段不显式检查，作为不变式假设 *)
+    
+                Some (qBool, GK)
+    
+            | _ => None
+            end
+    
+        | _ => None
+        end
+    
+
+
+
+    | CReject t1 var t2 =>
+        match translate_rel M Gamma t1 with
+        | Some (qSet, GK) =>
+    
+            (* push scope: var ↦ qSet *)
+            let Gamma' := push_var var (qSet, GK) Gamma in
+    
+            match translate_rel M Gamma' t2 with
+            | Some (qBool, GK') =>
+    
+                (* 设计不变式：
+                   - qBool 与 qSet schema 相同
+                   - GK' = GK *)
+    
+                Some (RADiff qSet qBool, GK)
+    
+            | _ => None
+            end
+    
+        | _ => None
+        end
+    
+
+
+
+
+
+
+    | COne t1 var t2 =>
+        match translate_rel M Gamma t1 with
+        | Some (qSet, []) =>
+    
+            (* push scope: var ↦ qSet *)
+            let Gamma' := push_var var (qSet, []) Gamma in
+    
+            match translate_rel M Gamma' t2 with
+            | Some (qBool, []) =>
+    
+                match last_col (schema_of (umlToSchema M) qBool) with
+                | Some vBool =>
+    
+                    (* cnt := |qBool| *)
+                    let qCnt :=
+                      RAAggregate
+                        []
+                        [("cnt", AggSize, vBool)]
+                        qBool
+                    in
+    
+                    (* cnt = 1 *)
+                    let qCond :=
+                      RASelect
+                        (RComp BEq (RCol "cnt") (RVal (V_Int 1)))
+                        qCnt
+                    in
+    
+                    (* EXISTS(qCond) *)
+                    let qExists := RAProject [] qCond in
+    
+                    (* if one then ctx else ∅ *)
+                    match Gamma with
+                    | (_, (qCtx, ctxGK)) :: _ =>
+                        Some (RADiff qCtx (RADiff qCtx qExists), ctxGK)
+                    | _ => None
+                    end
+    
+                | None => None
+                end
+    
+            | _ => None
+            end
+    
+    
+        | Some (qSet, GK) =>
+    
+            (* push scope: var ↦ qSet *)
+            let Gamma' := push_var var (qSet, GK) Gamma in
+    
+            match translate_rel M Gamma' t2 with
+            | Some (qBool, GK) =>
+    
+                match last_col (schema_of (umlToSchema M) qBool) with
+                | Some vBool =>
+    
+                    (* cnt[g] := |qBool[g]| *)
+                    let qCnt :=
+                      RAAggregate
+                        GK
+                        [("cnt", AggSize, vBool)]
+                        qBool
+                    in
+    
+                    (* cnt = 1 *)
+                    let qKeep :=
+                      RASelect
+                        (RComp BEq (RCol "cnt") (RVal (V_Int 1)))
+                        qCnt
+                    in
+    
+                    (* 返回满足 one 的分组 *)
+                    Some (RADistinct (RAProject (proj_cols GK) qKeep), GK)
+    
+                | None => None
+                end
+    
+            | _ => None
+            end
+    
+        | _ => None
+        end
+    
 (* 
-    (*  Iterator *)
-
-    | CForAll  =>
-        None
-
-    | CExists  =>
-        None
-
-    | CSelect  =>
-        None
-
-    | CReject  =>
-        None
-
-    | COne  =>
-        None
-
     | CCollect  =>
         None
 
