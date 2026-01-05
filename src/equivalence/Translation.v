@@ -1580,11 +1580,105 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
         end
     
 
-(* 
     | CIsUnique tm =>
-        None
+        match translate_rel M Gamma tm with
+        | Some (qA, []) =>
+            match last_col (schema_of (umlToSchema M) qA) with
+            | Some vA =>
+    
+                (* |A| *)
+                let qCntAll :=
+                  RAAggregate
+                    []
+                    [("cnt_all", AggSize, vA)]
+                    qA
+                in
+    
+                (* |distinct(A)| *)
+                let qDistinct :=
+                  RADistinct qA
+                in
+    
+                let qCntDist :=
+                  RAAggregate
+                    []
+                    [("cnt_dist", AggSize, vA)]
+                    qDistinct
+                in
+    
+                (* cnt_all = cnt_dist *)
+                let qCond :=
+                  RASelect
+                    (RComp BEq (RCol "cnt_all") (RCol "cnt_dist"))
+                    (RACartesian qCntAll qCntDist)
+                in
+    
+                (* EXISTS(qCond) *)
+                let qExists := RAProject [] qCond in
+    
+                (* if unique then ctx else ∅ *)
+                match Gamma with
+                | (_, (qCtx, _)) :: _ =>
+                    Some
+                      ( RADiff qCtx (RADiff qCtx qExists)
+                      , [] )
+                | _ => None
+                end
+    
+        | Some (qA, GK) =>
+            match last_col (schema_of (umlToSchema M) qA) with
+            | Some vA =>
+
+                (* |A[g]| *)
+                let qCntAll :=
+                RAAggregate
+                    GK
+                    [("cnt_all", AggSize, vA)]
+                    qA
+                in
+
+                (* |distinct(A[g])| *)
+                let qDistinct :=
+                RADistinct qA
+                in
+
+                let qCntDist :=
+                RAAggregate
+                    GK
+                    [("cnt_dist", AggSize, vA)]
+                    qDistinct
+                in
+
+                (* join on GK ∧ cnt_all = cnt_dist *)
+                match mk_cols_join_cond GK with
+                | None => None
+                | Some gkCond =>
+                    let qCond :=
+                    RBoolBin BAnd
+                        gkCond
+                        (RComp BEq (RCol "cnt_all") (RCol "cnt_dist"))
+                    in
+
+                    let qJoin :=
+                    RAJoin qCond qCntAll qCntDist
+                    in
+
+                    (* 返回满足 isUnique 的分组 *)
+                    Some
+                    ( RAProject (proj_cols GK) qJoin
+                    , GK )
+                end
+
+            | None => None
+            end
 
 
+
+        | None => None
+        end
+    
+
+(* 
     (*  Iterator *)
 
     | CForAll  =>

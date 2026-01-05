@@ -393,7 +393,6 @@ Inductive StringSub : string -> Z -> Z -> string -> Prop :=
 
 
 
-
         
 
 Inductive cevalR : obj_model -> env -> tm -> value -> Prop :=
@@ -661,6 +660,12 @@ Inductive cevalR : obj_model -> env -> tm -> value -> Prop :=
           forall M E t xs,
             cevalR M E t (V_Bag xs) ->
             cevalR M E (CNotEmpty t) (V_Bool (bag_not_empty xs))
+
+      | E_CIsUnique :
+          forall M E t xs,
+            cevalR M E t (V_Bag xs) ->
+            cevalR M E (CIsUnique t) (V_Bool (bag_is_unique xs))
+
 
 
   (*  Iterator（绑定变量！）, forall，exists中的varList是语法糖，可脱糖为单变量表示 *)
