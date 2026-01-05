@@ -330,6 +330,68 @@ Inductive cartesian_rowR : Row -> Row -> Row -> Prop :=
 
 
 
+Definition schema_of_table_inst (ti : TableInst) : RowSchema :=
+    match ti with
+    | [] => []
+    | r :: _ => r.(r_schema)
+    end.
+    
+
+Definition lookup_table_schema_db
+    (db : DBInstance) (tname : string) : RowSchema :=
+    match db.(tables) tname with
+    | Some ti => schema_of_table_inst ti
+    | None => []
+    end.
+
+
+
+Fixpoint schema_of_db (db : DBInstance) (q : ra_rel) : RowSchema :=
+    match q with
+    | RAEmpty =>
+        []
+  
+    | RAValues _ =>
+        (* 约定：RAValues 产生一个单列值 *)
+        ["elem"]
+  
+    | RATable t =>
+        lookup_table_schema_db db t
+  
+    | RATableSchema ts =>
+        (* 如果你还保留这个构造子 *)
+        map col_name ts.(table_cols)
+  
+    | RASelect _ q1 =>
+        schema_of_db db q1
+  
+    | RAProject ps _ =>
+        map proj_name ps
+        (* ps = [] ⇒ schema = []，用于 π[] / EXISTS *)
+  
+    | RAJoin _ q1 q2 =>
+        List.app (schema_of_db db q1) (schema_of_db db q2)
+  
+    | RACartesian q1 q2 =>
+        List.app (schema_of_db db q1) (schema_of_db db q2)
+  
+    | RAUnion q1 _ =>
+        schema_of_db db q1
+  
+    | RAIntersect q1 _ =>
+        schema_of_db db q1
+  
+    | RADiff q1 _ =>
+        (* Diff 的 schema 永远取左操作数 *)
+        schema_of_db db q1
+  
+    | RADistinct q1 =>
+        schema_of_db db q1
+  
+    | RAAggregate gcols aggs _ =>
+        List.app gcols (map (fun '(newc, _, _) => newc) aggs)
+    end.
+  
 
 
 
@@ -525,8 +587,11 @@ Inductive evalRAR : DBInstance -> ra_rel -> TableInst -> Prop :=
 
 | ER_Intersect :
     forall db q1 q2 rows,
+      schema_of_db db q1 = schema_of_db db q2 ->
+      schema_of_db db q1 <> [] ->
       evalRAR db (RADiff q1 (RADiff q1 q2)) rows ->
       evalRAR db (RAIntersect q1 q2) rows
+
 
 
 
@@ -535,11 +600,32 @@ Inductive evalRAR : DBInstance -> ra_rel -> TableInst -> Prop :=
 (*                                                           *)
 (*  使用 bag 差集语义                                       *)
 (*************************************************************)
-| ER_Diff :
+(* | ER_Diff :
     forall db q1 q2 rows1 rows2 rows',
       evalRAR db q1 rows1 ->
       evalRAR db q2 rows2 ->
       bag_diff_rows rows1 rows2 = rows' ->
+      evalRAR db (RADiff q1 q2) rows' *)
+
+| ER_Diff_SameSchema :
+    forall db q1 q2 rows1 rows2 rows',
+      schema_of_db db q1 = schema_of_db db q2 ->
+      evalRAR db q1 rows1 ->
+      evalRAR db q2 rows2 ->
+      bag_diff_rows rows1 rows2 = rows' ->
+      evalRAR db (RADiff q1 q2) rows'
+
+
+| ER_Diff_EmptySchema :
+    forall db q1 q2 rows1 rows2 rows',
+      schema_of_db db q2 = [] ->
+      evalRAR db q1 rows1 ->
+      evalRAR db q2 rows2 ->
+      rows' =
+        match rows2 with
+        | [] => rows1
+        | _  => []
+        end ->
       evalRAR db (RADiff q1 q2) rows'
 
 

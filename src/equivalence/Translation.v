@@ -272,20 +272,43 @@ Definition infer_class_from_schema (sc : Schema) (q : ra_rel) : option ClassName
 Definition groupkey := list string.
 
 
-Definition proj_cols (cs : list string)
-  : list RAProjItem :=
-  map
-    (fun c =>
-       {| proj_expr := RCol c
-        ; proj_name := c |})
-    cs.
 
 
 
 
+(* === 小工具：投影 GK / GK_r，以及 GK 等值连接条件 === *)
+
+  
+Definition proj_cols (cs : list ColName)
+: list RAProjItem :=
+map
+  (fun c =>
+     {| proj_expr := RCol c
+      ; proj_name := c |})
+  cs.
 
 
 
+Fixpoint proj_cols_r (CS : list ColName) : list RAProjItem :=
+    match CS with
+    | [] => []
+    | c :: cs =>
+        {| proj_expr := RCol c; proj_name := String.append c "_r" |}
+          :: proj_cols_r cs
+    end.
+  
+Fixpoint mk_cols_join_cond (CS : list ColName) : option ra_rex :=
+    match CS with
+    | [] => None
+    | c :: cs =>
+        let e0 :=
+          RComp BEq (RCol c) (RCol (String.append c "_r")) in
+        match mk_cols_join_cond cs with
+        | None => Some e0
+        | Some e => Some (RBoolBin BAnd e0 e)
+        end
+    end.
+  
 
 
 
@@ -867,28 +890,501 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
     
 
 
-(* 
+
 
     (*  Bag 谓词  *)
-    | CIncludesAll  =>
+
+    | CIncludesAll t1 t2 =>
+        match translate_rel M Gamma t1,
+            translate_rel M Gamma t2 with
+        | Some (qA, gkA), Some (qB, gkB) =>
+
+
+            (* 取两个 bag 的元素列 *)
+            match last_col (schema_of (umlToSchema M) qA),
+                last_col (schema_of (umlToSchema M) qB) with
+            | Some vA, Some vB =>
+
+                match gkA, gkB with
+                | [], [] =>
+                    (* 统一投影为 elem *)
+                    let qA' :=
+                    RAProject
+                        [ {| proj_expr := RCol vA; proj_name := "elem" |} ]
+                        qA
+                    in
+
+                    let qB' :=
+                    RAProject
+                        [ {| proj_expr := RCol vB; proj_name := "elem" |} ]
+                        qB
+                    in
+
+                    (* A ∩ B *)
+                    let qInter :=
+                    RAIntersect qA' qB'
+                    in
+
+                    (* |B| *)
+                    let qCntB :=
+                    RAAggregate
+                        []
+                        [ ("b_count", AggSize, "elem") ]
+                        qB'
+                    in
+
+                    (* |A ∩ B| *)
+                    let qCntI :=
+                    RAAggregate
+                        []
+                        [ ("i_count", AggSize, "elem") ]
+                        qInter
+                    in
+
+                    (* 将两个 count 放到同一行 *)
+                    let qCnt :=
+                    RACartesian qCntB qCntI
+                    in
+
+                    (* 条件：b_count = i_count *)
+                    let qCond :=
+                    RASelect
+                        (RComp BEq (RCol "b_count") (RCol "i_count"))
+                        qCnt
+                    in
+
+                    (* EXISTS(qCond) *)
+                    let qExists :=
+                    RAProject [] qCond
+                    in
+
+                    (* 取当前上下文对象集合 *)
+                    match Gamma with
+                    | (_, (qCtx, _)) :: _ =>
+
+                        (* scalarQuery 模式：
+                        if EXISTS(qCond) then qCtx else ∅ *)
+                        let qRes :=
+                        RADiff
+                            qCtx
+                            (RADiff qCtx qExists)
+                        in
+                        Some (qRes, [])
+                    | _ => None
+                    end
+
+
+                | [], GK =>
+                    (* set2 分组：GK + elem *)
+                    let qB' :=
+                      RAProject
+                        (proj_cols GK ++ [{| proj_expr := RCol vB; proj_name := "elem_r" |}])
+                        qB
+                    in
+                
+                    (* set2GroupAndCount：按 GK 计 b_count *)
+                    let qBGroupCnt :=
+                      RAAggregate GK [("b_count", AggSize, "elem_r")] qB'
+                    in
+                
+                    (* set1：单集合 elem *)
+                    let qAelem :=
+                      RAProject [ {| proj_expr := RCol vA; proj_name := "elem" |} ] qA
+                    in
+                
+                    (* innerJoin：按 elem 等值连接（相当于取交集） *)
+                    let qJoin :=
+                      RAJoin (RComp BEq (RCol "elem") (RCol "elem_r")) qAelem qB'
+                    in
+                
+                    (* innerJoin 聚合：按 GK 计 i_count *)
+                    let qInnerCnt :=
+                      RAAggregate GK [("i_count", AggSize, "elem_r")] qJoin
+                    in
+                
+                    let qRes :=
+                      RAJoin (RComp BEq (RCol "b_count") (RCol "i_count")) qBGroupCnt qInnerCnt
+                    in
+
+
+                    (* 为避免 GK 列名冲突，右侧 GK 重命名为 *_r *)
+                    let qInnerCnt_r :=
+                    RAProject
+                        (proj_cols_r GK ++ [{| proj_expr := RCol "i_count"; proj_name := "i_count" |}])
+                        qInnerCnt
+                    in
+
+                    (* join 条件：GK = GK_r ∧ b_count = i_count *)
+                    match mk_cols_join_cond GK with
+                    | None => None
+                    | Some gkCond =>
+                        let qCond :=
+                        RBoolBin BAnd
+                            gkCond
+                            (RComp BEq (RCol "b_count") (RCol "i_count"))
+                        in
+
+                        (* 满足 includesAll 的分组 *)
+                        let qRes :=
+                        RAProject
+                            (proj_cols GK)
+                            (RAJoin qCond qBGroupCnt qInnerCnt_r)
+                        in
+
+                        Some (qRes, GK)
+                    end
+
+
+                | GK, [] =>
+                    (* 分组集合：GK + elem *)
+                    let qA' :=
+                      RAProject
+                        (proj_cols GK ++ [{| proj_expr := RCol vA; proj_name := "elem" |}])
+                        qA
+                    in
+                
+                    (* 单个集合：elem_r *)
+                    let qB' :=
+                      RAProject
+                        [{| proj_expr := RCol vB; proj_name := "elem_r" |}]
+                        qB
+                    in
+                
+                    (* innerJoin：按元素等值连接，得到交集 *)
+                    let qJoin :=
+                      RAJoin
+                        (RComp BEq (RCol "elem") (RCol "elem_r"))
+                        qA' qB'
+                    in
+                
+                    (* 对交集按 GK 聚合，统计 i_count *)
+                    let qInnerCnt :=
+                      RAAggregate
+                        GK
+                        [("i_count", AggSize, "elem")]
+                        qJoin
+                    in
+                
+                    (* 计算单个集合基数 |B|，无 groupkey，是一行关系 *)
+                    let qBCnt :=
+                      RAAggregate
+                        []
+                        [("b_count", AggSize, "elem_r")]
+                        qB'
+                    in
+                
+                
+                    (* join 条件：i_count = b_count *)
+                    let qCond :=
+                      RComp BEq (RCol "i_count") (RCol "b_count")
+                    in
+                
+                    (* 满足 includesAll 的分组 *)
+                    let qRes :=
+                      RAProject
+                        (proj_cols GK)
+                        (RAJoin qCond qInnerCnt qBCnt)
+                    in
+                
+                    Some (qRes, GK)
+                
+
+
+                | GK, _ =>
+                    (* 假设 GK1 = GK2 = GK *)
+                
+                    (* 左侧分组集合：GK + elem *)
+                    let qA' :=
+                      RAProject
+                        (proj_cols GK ++ [{| proj_expr := RCol vA; proj_name := "elem" |}])
+                        qA
+                    in
+                
+                    (* 右侧分组集合：GK + elem_r *)
+                    let qB' :=
+                      RAProject
+                        (proj_cols GK ++ [{| proj_expr := RCol vB; proj_name := "elem_r" |}])
+                        qB
+                    in
+                
+                    (* set2GroupAndCount：按 GK 计 b_count *)
+                    let qBGroupCnt :=
+                      RAAggregate GK [("b_count", AggSize, "elem_r")] qB'
+                    in
+                
+                    (* innerJoin：GK 等值 ∧ elem 等值（分组内交集） *)
+                    match mk_cols_join_cond GK with
+                    | None => None
+                    | Some gkCond =>
+                        let qJoinCond :=
+                          RBoolBin BAnd
+                            gkCond
+                            (RComp BEq (RCol "elem") (RCol "elem_r"))
+                        in
+                
+                        let qJoin :=
+                          RAJoin qJoinCond qA' qB'
+                        in
+                
+                        (* 对交集按 GK 聚合，计 i_count *)
+                        let qInnerCnt :=
+                          RAAggregate GK [("i_count", AggSize, "elem")] qJoin
+                        in
+                
+                        (* 为避免 GK 列名冲突，将 qInnerCnt 的 GK 重命名为 *_r *)
+                        let qInnerCnt_r :=
+                          RAProject
+                            (proj_cols_r GK ++ [{| proj_expr := RCol "i_count"; proj_name := "i_count" |}])
+                            qInnerCnt
+                        in
+                
+                        (* join 条件：GK = GK_r ∧ i_count = b_count *)
+                        let qCond :=
+                          RBoolBin BAnd
+                            gkCond
+                            (RComp BEq (RCol "i_count") (RCol "b_count"))
+                        in
+                
+                        (* 满足 includesAll 的分组 *)
+                        let qRes :=
+                          RAProject
+                            (proj_cols GK)
+                            (RAJoin qCond qBGroupCnt qInnerCnt_r)
+                        in
+                
+                        Some (qRes, GK)
+                    end
+                
+                end
+
+            | _, _ => None
+            end
+
+
+        | _, _ => None
+        end
+
+
+    (*  Bag 谓词  *)
+    | CExcludesAll t1 t2 =>
+        match translate_rel M Gamma t1,
+            translate_rel M Gamma t2 with
+        | Some (qA, gkA), Some (qB, gkB) =>
+
+            match gkA, gkB with
+
+            (*************************************************************)
+            (* 1. 单个集合 × 单个集合                                   *)
+            (*    A excludesAll B  ⇔  A ∩ B = ∅                          *)
+            (*************************************************************)
+            | [], [] =>
+                match last_col (schema_of (umlToSchema M) qA),
+                    last_col (schema_of (umlToSchema M) qB) with
+                | Some vA, Some vB =>
+
+                    let qA' :=
+                    RAProject
+                        [{| proj_expr := RCol vA; proj_name := "elem" |}]
+                        qA
+                    in
+                    let qB' :=
+                    RAProject
+                        [{| proj_expr := RCol vB; proj_name := "elem_r" |}]
+                        qB
+                    in
+
+                    (* A ∩ B *)
+                    let qInter :=
+                    RAJoin
+                        (RComp BEq (RCol "elem") (RCol "elem_r"))
+                        qA' qB'
+                    in
+
+                    (* |A ∩ B| *)
+                    let qCnt :=
+                    RAAggregate [] [("i_count", AggSize, "elem")] qInter
+                    in
+
+                    (* i_count = 0 *)
+                    let qCond :=
+                    RASelect
+                        (RComp BEq (RCol "i_count") (RVal (V_Int 0)))
+                        qCnt
+                    in
+
+                    (* EXISTS(qCond) *)
+                    let qExists := RAProject [] qCond in
+
+                    (* if true return context, else empty *)
+                    match Gamma with
+                    | (_, (qCtx, _)) :: _ =>
+                        Some
+                        ( RADiff qCtx (RADiff qCtx qExists)
+                        , [] )
+                    | _ => None
+                    end
+                | _, _ => None
+                end
+
+            (*************************************************************)
+            (* 2. 单个集合 × 分组集合                                   *)
+            (*    返回不与 A 有交集的分组                                *)
+            (*************************************************************)
+            | [], GK =>
+                match last_col (schema_of (umlToSchema M) qA),
+                    last_col (schema_of (umlToSchema M) qB) with
+                | Some vA, Some vB =>
+
+                    let qA' :=
+                    RAProject
+                        [{| proj_expr := RCol vA; proj_name := "elem" |}]
+                        qA
+                    in
+
+                    let qB' :=
+                    RAProject
+                        (proj_cols GK ++
+                        [{| proj_expr := RCol vB; proj_name := "elem_r" |}])
+                        qB
+                    in
+
+                    let qJoin :=
+                    RAJoin
+                        (RComp BEq (RCol "elem") (RCol "elem_r"))
+                        qA' qB'
+                    in
+
+                    let qCnt :=
+                    RAAggregate GK [("cnt", AggSize, "elem_r")] qJoin
+                    in
+
+                    let qRes :=
+                    RASelect
+                        (RComp BEq (RCol "cnt") (RVal (V_Int 0)))
+                        qCnt
+                    in
+
+                    Some (RAProject (proj_cols GK) qRes, GK)
+
+                | _, _ => None
+                end
+
+            (*************************************************************)
+            (* 3. 分组集合 × 单个集合                                   *)
+            (*    返回与 B 无交集的分组                                  *)
+            (*************************************************************)
+            | GK, [] =>
+                match last_col (schema_of (umlToSchema M) qA),
+                    last_col (schema_of (umlToSchema M) qB) with
+                | Some vA, Some vB =>
+
+                    let qA' :=
+                    RAProject
+                        (proj_cols GK ++
+                        [{| proj_expr := RCol vA; proj_name := "elem" |}])
+                        qA
+                    in
+
+                    let qB' :=
+                    RAProject
+                        [{| proj_expr := RCol vB; proj_name := "elem_r" |}]
+                        qB
+                    in
+
+                    let qJoin :=
+                    RAJoin
+                        (RComp BEq (RCol "elem") (RCol "elem_r"))
+                        qA' qB'
+                    in
+
+                    let qCnt :=
+                    RAAggregate GK [("cnt", AggSize, "elem")] qJoin
+                    in
+
+                    let qRes :=
+                    RASelect
+                        (RComp BEq (RCol "cnt") (RVal (V_Int 0)))
+                        qCnt
+                    in
+
+                    Some (RAProject (proj_cols GK) qRes, GK)
+
+                | _, _ => None
+                end
+
+            (*************************************************************)
+            (* 4. 分组集合 × 分组集合                                   *)
+            (*    分组内 excludesAll                                    *)
+            (*************************************************************)
+            | GK1, GK2 =>
+                (* 假设 GK1 = GK2 *)
+                let GK := GK1 in
+                match last_col (schema_of (umlToSchema M) qA),
+                    last_col (schema_of (umlToSchema M) qB),
+                    mk_cols_join_cond GK with
+                | Some vA, Some vB, Some gkCond =>
+
+                    let qA' :=
+                    RAProject
+                        (proj_cols GK ++
+                        [{| proj_expr := RCol vA; proj_name := "elem" |}])
+                        qA
+                    in
+
+                    let qB' :=
+                    RAProject
+                        (proj_cols GK ++
+                        [{| proj_expr := RCol vB; proj_name := "elem_r" |}])
+                        qB
+                    in
+
+                    let qJoinCond :=
+                    RBoolBin BAnd
+                        gkCond
+                        (RComp BEq (RCol "elem") (RCol "elem_r"))
+                    in
+
+                    let qJoin :=
+                    RAJoin qJoinCond qA' qB'
+                    in
+
+                    let qCnt :=
+                    RAAggregate GK [("cnt", AggSize, "elem")] qJoin
+                    in
+
+                    let qRes :=
+                    RASelect
+                        (RComp BEq (RCol "cnt") (RVal (V_Int 0)))
+                        qCnt
+                    in
+
+                    Some (RAProject (proj_cols GK) qRes, GK)
+
+                | _, _, _ => None
+                end
+            end
+
+        | _, _ => None
+        end
+
+
+
+
+
+(*  
+    | CIncludes t1 t2 =>
         None
 
-    | CExcludesAll  =>
+    | CExcludes t1 t2 =>
         None
 
-    | CIncludes  =>
+    | CIsEmpty tm =>
         None
 
-    | CExcludes  =>
-        None
-
-    | CIsEmpty  =>
-        None
-
-    | CNotEmpty  =>
+    | CNotEmpty tm =>
         None
         
-    | CIsUnique  =>
+    | CIsUnique tm =>
         None
 
 
@@ -921,8 +1417,8 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
     (*  bag聚合  *)
     | EAggregate : aggop -> tm -> tm 
- *)
 
+ *)
 
 
     | _ =>
