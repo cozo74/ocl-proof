@@ -1173,10 +1173,9 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
             match gkA, gkB with
 
-            (*************************************************************)
             (* 1. 单个集合 × 单个集合                                   *)
             (*    A excludesAll B  ⇔  A ∩ B = ∅                          *)
-            (*************************************************************)
+            (*    —— 全局谓词，必须用 EXISTS/NOT EXISTS                 *)
             | [], [] =>
                 match last_col (schema_of (umlToSchema M) qA),
                     last_col (schema_of (umlToSchema M) qB) with
@@ -1200,36 +1199,24 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
                         qA' qB'
                     in
 
-                    (* |A ∩ B| *)
-                    let qCnt :=
-                    RAAggregate [] [("i_count", AggSize, "elem")] qInter
-                    in
+                    (* EXISTS(A ∩ B) *)
+                    let qExists := RAProject [] qInter in
 
-                    (* i_count = 0 *)
-                    let qCond :=
-                    RASelect
-                        (RComp BEq (RCol "i_count") (RVal (V_Int 0)))
-                        qCnt
-                    in
-
-                    (* EXISTS(qCond) *)
-                    let qExists := RAProject [] qCond in
-
-                    (* if true return context, else empty *)
+                    (* if NOT EXISTS(A ∩ B) then qCtx else ∅ *)
                     match Gamma with
                     | (_, (qCtx, _)) :: _ =>
                         Some
-                        ( RADiff qCtx (RADiff qCtx qExists)
+                        ( RADiff qCtx qExists
                         , [] )
                     | _ => None
                     end
+
                 | _, _ => None
                 end
 
-            (*************************************************************)
             (* 2. 单个集合 × 分组集合                                   *)
-            (*    返回不与 A 有交集的分组                                *)
-            (*************************************************************)
+            (*    返回与 A 无交集的分组                                  *)
+            (*    —— 分组 NOT EXISTS，用差集                             *)
             | [], GK =>
                 match last_col (schema_of (umlToSchema M) qA),
                     last_col (schema_of (umlToSchema M) qB) with
@@ -1248,31 +1235,31 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
                         qB
                     in
 
+                    (* A ∩ B[g] *)
                     let qJoin :=
                     RAJoin
                         (RComp BEq (RCol "elem") (RCol "elem_r"))
                         qA' qB'
                     in
 
-                    let qCnt :=
-                    RAAggregate GK [("cnt", AggSize, "elem_r")] qJoin
+                    (* 所有分组 *)
+                    let qAllGK :=
+                    RAProject (proj_cols GK) qB
                     in
 
-                    let qRes :=
-                    RASelect
-                        (RComp BEq (RCol "cnt") (RVal (V_Int 0)))
-                        qCnt
+                    (* 与 A 有交集的分组 *)
+                    let qHitGK :=
+                    RAProject (proj_cols GK) qJoin
                     in
 
-                    Some (RAProject (proj_cols GK) qRes, GK)
+                    (* 不与 A 有交集的分组 *)
+                    Some (RADiff qAllGK qHitGK, GK)
 
                 | _, _ => None
                 end
 
-            (*************************************************************)
             (* 3. 分组集合 × 单个集合                                   *)
             (*    返回与 B 无交集的分组                                  *)
-            (*************************************************************)
             | GK, [] =>
                 match last_col (schema_of (umlToSchema M) qA),
                     last_col (schema_of (umlToSchema M) qB) with
@@ -1291,31 +1278,28 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
                         qB
                     in
 
+                    (* A[g] ∩ B *)
                     let qJoin :=
                     RAJoin
                         (RComp BEq (RCol "elem") (RCol "elem_r"))
                         qA' qB'
                     in
 
-                    let qCnt :=
-                    RAAggregate GK [("cnt", AggSize, "elem")] qJoin
+                    let qAllGK :=
+                    RAProject (proj_cols GK) qA
                     in
 
-                    let qRes :=
-                    RASelect
-                        (RComp BEq (RCol "cnt") (RVal (V_Int 0)))
-                        qCnt
+                    let qHitGK :=
+                    RAProject (proj_cols GK) qJoin
                     in
 
-                    Some (RAProject (proj_cols GK) qRes, GK)
+                    Some (RADiff qAllGK qHitGK, GK)
 
                 | _, _ => None
                 end
 
-            (*************************************************************)
             (* 4. 分组集合 × 分组集合                                   *)
             (*    分组内 excludesAll                                    *)
-            (*************************************************************)
             | GK1, GK2 =>
                 (* 假设 GK1 = GK2 *)
                 let GK := GK1 in
@@ -1338,27 +1322,24 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
                         qB
                     in
 
-                    let qJoinCond :=
-                    RBoolBin BAnd
-                        gkCond
-                        (RComp BEq (RCol "elem") (RCol "elem_r"))
-                    in
-
+                    (* 分组内交集 *)
                     let qJoin :=
-                    RAJoin qJoinCond qA' qB'
+                    RAJoin
+                        (RBoolBin BAnd
+                        gkCond
+                        (RComp BEq (RCol "elem") (RCol "elem_r")))
+                        qA' qB'
                     in
 
-                    let qCnt :=
-                    RAAggregate GK [("cnt", AggSize, "elem")] qJoin
+                    let qAllGK :=
+                    RAProject (proj_cols GK) qA
                     in
 
-                    let qRes :=
-                    RASelect
-                        (RComp BEq (RCol "cnt") (RVal (V_Int 0)))
-                        qCnt
+                    let qHitGK :=
+                    RAProject (proj_cols GK) qJoin
                     in
 
-                    Some (RAProject (proj_cols GK) qRes, GK)
+                    Some (RADiff qAllGK qHitGK, GK)
 
                 | _, _, _ => None
                 end
@@ -1371,19 +1352,235 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
 
 
-(*  
+    (*  Bag 谓词  *)
     | CIncludes t1 t2 =>
-        None
+        match translate_rel M Gamma t1,
+            translate_rex M Gamma t2 with
+        | Some (qA, gkA), Some rLit =>
+
+            match gkA with
+
+
+            (* 1) 单个集合 × literal/标量表达式                          *)
+            (*    若集合中存在 elem = rLit，则返回当前上下文全集，否则空 *)
+            | [] =>
+                match last_col (schema_of (umlToSchema M) qA) with
+                | Some vA =>
+
+                    (* filter: elem = rLit *)
+                    let qFilter :=
+                    RASelect
+                        (RComp BEq (RCol vA) rLit)
+                        qA
+                    in
+
+                    (* EXISTS(qCond) ：π[] 产生 {⟨⟩} 或 ∅ *)
+                    let qExists := RAProject [] qFilter in
+
+                    (* if EXISTS(qCond) then qCtx else ∅ *)
+                    match Gamma with
+                    | (_, (qCtx, _)) :: _ =>
+                        let qRes :=
+                        RADiff qCtx (RADiff qCtx qExists)
+                        in
+                        Some (qRes, [])
+                    | _ => None
+                    end
+
+                | None => None
+                end
+
+
+            (* 2) 分组集合 × literal/标量表达式                          *)
+            (*    返回包含该 literal 的分组 GK                            *)
+            | GK =>
+                match last_col (schema_of (umlToSchema M) qA) with
+                | Some vA =>
+
+                    (* filter: elem = rLit *)
+                    let qFilter :=
+                    RASelect
+                        (RComp BEq (RCol vA) rLit)
+                        qA
+                    in
+
+                    (* 直接投影出 GK：存在即满足 *)
+                    let qRes :=
+                    RAProject (proj_cols GK) qFilter
+                    in
+
+                    Some (qRes, GK)
+
+                | None => None
+                end
+            end
+
+        | _, _ => None
+        end
+
 
     | CExcludes t1 t2 =>
-        None
+        match translate_rel M Gamma t1,
+        translate_rex M Gamma t2 with
+        | Some (qA, gkA), Some rLit =>
+
+            match gkA with
+
+
+            (* 1) 单个集合 × literal/标量表达式                          *)
+            (*    若集合中存在 elem = rLit，则返回当前上下文全集，否则空 *)
+            | [] =>
+                match last_col (schema_of (umlToSchema M) qA) with
+                | Some vA =>
+
+                    (* filter: elem = rLit *)
+                    let qFilter :=
+                    RASelect
+                        (RComp BEq (RCol vA) rLit)
+                        qA
+                    in
+
+
+                    (* EXISTS(qCond) ：π[] 产生 {⟨⟩} 或 ∅ *)
+                    let qExists := RAProject [] qFilter in
+
+                    (* if EXISTS(qCond) then qCtx else ∅ *)
+                    match Gamma with
+                    | (_, (qCtx, _)) :: _ =>
+                        let qRes :=
+                        RADiff qCtx qExists
+                        in
+                        Some (qRes, [])
+                    | _ => None
+                    end
+
+                | None => None
+                end
+
+
+            (* 2) 分组集合 × literal/标量表达式                          *)
+            (*    返回不包含该 literal 的分组 GK                            *)
+            | GK =>
+            match last_col (schema_of (umlToSchema M) qA) with
+            | Some vA =>
+        
+                (* filter: elem = rLit *)
+                let qFilter :=
+                  RASelect
+                    (RComp BEq (RCol vA) rLit)
+                    qA
+                in
+        
+                (* 所有分组 GK（全集） *)
+                let qAllGK :=
+                  RAProject (proj_cols GK) qA
+                in
+        
+                (* 命中 literal 的分组 GK *)
+                let qHitGK :=
+                  RAProject (proj_cols GK) qFilter
+                in
+        
+                (* 不包含 literal 的分组：All \ Hit *)
+                let qRes :=
+                  RADiff qAllGK qHitGK
+                in
+        
+                Some (qRes, GK)
+        
+            | None => None
+            end
+        
+
+        | _, _ => None
+        end
+
+
+
 
     | CIsEmpty tm =>
-        None
+        match translate_rel M Gamma tm with
+        | Some (qA, gkA) =>
+    
+            match gkA with
+    
+            (* 1) 单个集合：isEmpty ⇔ NOT EXISTS(qA)                    *)
+            | [] =>
+                (* EXISTS(qA) *)
+                let qExists := RAProject [] qA in
+    
+                (* if NOT EXISTS(qA) then qCtx else ∅ *)
+                match Gamma with
+                | (_, (qCtx, _)) :: _ =>
+                    Some
+                      ( RADiff qCtx qExists
+                      , [] )
+                | _ => None
+                end
+    
+            (* 2) 分组集合：逐组 isEmpty                                *)
+            (*    返回没有任何元素的分组                                *)
+            | GK =>
+                match Gamma with
+                | (_, (qCtx, _)) :: _ =>
+
+                    (* 所有上下文中的分组 *)
+                    let qAllGK :=
+                    RAProject (proj_cols GK) qCtx
+                    in
+
+                    (* 实际出现过元素的分组 *)
+                    let qNonEmptyGK :=
+                    RAProject (proj_cols GK) qA
+                    in
+
+                    (* 空分组 *)
+                    Some
+                    ( RADiff qAllGK qNonEmptyGK
+                    , GK )
+
+                | _ => None
+                end
+            end
+    
+        | _ => None
+        end
+    
+
+
+        
 
     | CNotEmpty tm =>
-        None
-        
+        match translate_rel M Gamma tm with
+        | Some (qA, gkA) =>
+    
+            match gkA with
+    
+            (* 1) 单个集合：notEmpty ⇔ EXISTS(qA)                       *)
+            | [] =>
+                let qExists := RAProject [] qA in
+                match Gamma with
+                | (_, (qCtx, _)) :: _ =>
+                    Some
+                      ( RADiff qCtx (RADiff qCtx qExists)
+                      , [] )
+                | _ => None
+                end
+    
+            (* 2) 分组集合：返回非空分组                                *)
+            | GK =>
+                (* 只要分组在 qA 中出现过，即为 notEmpty *)
+                let qRes :=
+                  RAProject (proj_cols GK) qA
+                in
+                Some (qRes, GK)
+            end
+    
+        | _ => None
+        end
+    
+
+(* 
     | CIsUnique tm =>
         None
 
@@ -1416,9 +1613,8 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
 
     (*  bag聚合  *)
-    | EAggregate : aggop -> tm -> tm 
+    | EAggregate : aggop -> tm -> tm  *)
 
- *)
 
 
     | _ =>
