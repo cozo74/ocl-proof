@@ -313,7 +313,14 @@ Fixpoint mk_cols_join_cond (CS : list ColName) : option ra_rex :=
 
 
 
-
+Definition agg_col_name (op : aggop) (v : ColName) : ColName :=
+    match op with
+    | AggSize => "cnt"
+    | AggMin  => "min_" ++ v
+    | AggMax  => "max_" ++ v
+    | AggSum  => "sum_" ++ v
+    end.
+  
 
 
 
@@ -467,6 +474,19 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
         若在rel->collect(nrole)操作中使用了nrole，此时是对rel集合取nrole的集合
         并进行flatten（见手册11.9.1中对collect操作的语义说明），因此groupkey不变。
     *)
+
+    (* 
+        Invariant（groupkey 不变量）
+        对任意 (q, GK)：
+
+        GK = [] 表示 q 描述的是一个全局 Bag
+
+        GK ≠ [] 表示 q 描述的是一个 按 GK 分组的 Bag family
+
+        所有 RA 运算都必须保持这一解释一致
+    *)
+
+
     | CNRole tm nrole =>
         match translate_rel M Gamma tm with
         | None => None
@@ -1996,19 +2016,221 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
         | _ => None
         end
     
-(* 
-    | CCollect  =>
-        None
-
-    | CRCollect  =>
-        None
-
-    | CNRCollect  =>
-        None
 
 
-    (*  bag聚合  *)
-    | EAggregate : aggop -> tm -> tm  *)
+
+
+    | CCollect t1 attr =>
+        match translate_rel M Gamma t1 with
+        | Some (qSet, GK) =>
+    
+            (* 从 qSet 推断所属类 C *)
+            match infer_class_from_schema (umlToSchema M) qSet with
+            | None => None
+            | Some C =>
+    
+                let oid := oidColName C in
+                let qClass := RATable C in
+    
+                (* 右侧：类表，仅保留 oid 与 attr *)
+                let qR :=
+                  RAProject
+                    [ {| proj_expr := RCol oid;  proj_name := "oid_r" |}
+                    ; {| proj_expr := RCol attr; proj_name := attr    |}
+                    ]
+                    qClass
+                in
+    
+                (* 按对象 oid 等值连接 *)
+                let qJoin :=
+                  RAJoin
+                    (RComp BEq (RCol oid) (RCol "oid_r"))
+                    qSet qR
+                in
+    
+                (* 投影：保留原 set 的所有列 + attr *)
+                let qProj :=
+                  RAProject
+                    (
+                      map
+                        (fun c =>
+                           {| proj_expr := RCol c; proj_name := c |})
+                        (schema_of (umlToSchema M) qSet)
+                      ++
+                      [{| proj_expr := RCol attr; proj_name := attr |}]
+                    )
+                    qJoin
+                in
+    
+                (* collect 的关键：去重 *)
+                let qRes := qProj in
+    
+                Some (qRes, GK)
+    
+            end
+        | _ => None
+        end
+    
+
+    | CRCollect t1 role =>
+        match translate_rel M Gamma t1 with
+        | Some (qSet, GK) =>
+    
+            (* 从 qSet 推断所属类 C *)
+            match infer_class_from_schema (umlToSchema M) qSet with
+            | None => None
+            | Some C =>
+    
+                (* 在 UMLModel 中查找 (C, role) 对应的关联 *)
+                match lookup_role_assoc M.(uml_assocs) C role with
+                | None => None
+                | Some A =>
+    
+                    let oidC := oidColName C in
+                    let D    := A.(assoc_c2) in
+                    let oidD := oidColName D in
+    
+                    (* 关联表 *)
+                    let qAssoc := RATable (assoc_name A) in
+    
+                    (* 右侧：关联表，仅保留两端 oid *)
+                    let qR :=
+                      RAProject
+                        [ {| proj_expr := RCol oidC; proj_name := "oid_r" |}
+                        ; {| proj_expr := RCol oidD; proj_name := oidD    |}
+                        ]
+                        qAssoc
+                    in
+    
+                    (* 与原集合按 oid 等值连接 *)
+                    let qJoin :=
+                      RAJoin
+                        (RComp BEq (RCol oidC) (RCol "oid_r"))
+                        qSet qR
+                    in
+    
+                    (* 投影：原集合所有列 + role 端 oid *)
+                    let qRes :=
+                      RAProject
+                        (
+                          map
+                            (fun c =>
+                               {| proj_expr := RCol c; proj_name := c |})
+                            (schema_of (umlToSchema M) qSet)
+                          ++
+                          [{| proj_expr := RCol oidD; proj_name := oidD |}]
+                        )
+                        qJoin
+                    in
+    
+                    (* 注意：这里不做 distinct *)
+                    Some (qRes, GK)
+    
+                end
+            end
+    
+        | _ => None
+        end
+    
+
+
+
+
+    | CNRCollect t1 nrole =>
+        match translate_rel M Gamma t1 with
+        | Some (qSet, GK) =>
+    
+            (* 从 qSet 推断所属类 C *)
+            match infer_class_from_schema (umlToSchema M) qSet with
+            | None => None
+            | Some C =>
+    
+                (* 在 UMLModel 中查找 (C, nrole) 对应的关联 *)
+                match lookup_role_assoc M.(uml_assocs) C nrole with
+                | None => None
+                | Some A =>
+    
+                    let oidC := oidColName C in
+                    let D    := A.(assoc_c2) in
+                    let oidD := oidColName D in
+    
+                    (* 关联表 *)
+                    let qAssoc := RATable (assoc_name A) in
+    
+                    (* 右侧：仅保留两端 oid *)
+                    let qR :=
+                      RAProject
+                        [ {| proj_expr := RCol oidC; proj_name := "oid_r" |}
+                        ; {| proj_expr := RCol oidD; proj_name := oidD    |}
+                        ]
+                        qAssoc
+                    in
+    
+                    (* 与原集合按 C 端 oid 等值连接 *)
+                    let qJoin :=
+                      RAJoin
+                        (RComp BEq (RCol oidC) (RCol "oid_r"))
+                        qSet qR
+                    in
+    
+                    (* 投影：原集合所有列 + nrole 端 oid *)
+                    let qRes :=
+                      RAProject
+                        (
+                          map
+                            (fun c =>
+                               {| proj_expr := RCol c; proj_name := c |})
+                            (schema_of (umlToSchema M) qSet)
+                          ++
+                          [{| proj_expr := RCol oidD; proj_name := oidD |}]
+                        )
+                        qJoin
+                    in
+    
+                    (* collect 的 Bag 语义：不做 distinct *)
+                    Some (qRes, GK)
+    
+                end
+            end
+    
+        | _ => None
+        end
+    
+
+
+
+    (*  bag 聚合  *)
+
+    (* 
+        设计约束：
+        对单集合的聚合（size / min / max / sum / avg）不产生数值表达式，而产生一行关系；
+        该结果只能用于布尔判断（如 =、>、<），不能参与算术运算。
+    *)
+    | EAggregate op t =>
+        match translate_rel M Gamma t with
+        | Some (qSet, GK) =>
+
+            (* 取最后一列作为聚合列 *)
+            match last_col (schema_of (umlToSchema M) qSet) with
+            | None => None
+            | Some v =>
+
+                (* =============================== *)
+                (* 统一：关系级聚合（不产生标量） *)
+                (* =============================== *)
+                let qAgg :=
+                RAAggregate
+                    GK
+                    [(agg_col_name op v, op, v)]
+                    qSet
+                in
+
+                Some (qAgg, GK)
+            end
+
+        | _ => None
+        end
+
 
 
 
