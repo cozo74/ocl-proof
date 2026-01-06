@@ -358,6 +358,59 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
         end
 
 
+
+
+    (* context *)
+    | CContext cls inv =>
+        (* 1) 全集：Person 类对象表 *)
+        let qAll := RATable cls in
+
+        (* 2) 将全集统一投影为 oid *)
+        let qAllOid :=
+        RAProject
+            [{| proj_expr := RCol (oidColName cls)
+            ; proj_name := "oid" |}]
+            qAll
+        in
+
+        (* 3) push self *)
+        let Gamma' : varEnv :=
+        push_var "self" (qAllOid, []) Gamma
+        in
+
+        (* 4) 翻译不变式 inv，得到满足谓词的对象集合 *)
+        match translate_rel M Gamma' inv with
+        | None => None
+        | Some (qSat, gkSat) =>
+
+            (* 5) inv 结果应为对象级谓词集合 *)
+            match gkSat with
+            | [] =>
+
+                (* 将 qSat 统一投影为 oid *)
+                let qSatOid :=
+                RAProject
+                    [{| proj_expr := RCol (oidColName cls)
+                    ; proj_name := "oid" |}]
+                    qSat
+                in
+
+                (* 6) 差集：violating = AllOid \ SatOid *)
+                let qBad :=
+                RADiff qAllOid qSatOid
+                in
+
+                Some (qBad, [])
+
+            | _ => None
+            end
+        end
+
+
+
+
+
+
     (*  Var Self  *)
     | CVar x =>
         match lookup_var Gamma x with
@@ -1320,7 +1373,7 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
 
             (* 4. 分组集合 × 分组集合                                   *)
             (*    分组内 excludesAll                                    *)
-            | GK1, GK2 =>
+            | GK1, _ =>
                 (* 假设 GK1 = GK2 *)
                 let GK := GK1 in
                 match last_col (schema_of (umlToSchema M) qA),
