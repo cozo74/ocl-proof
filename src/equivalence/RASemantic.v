@@ -649,6 +649,14 @@ Inductive evalRAR : DBInstance -> ra_rel -> TableInst -> Prop :=
 (*     - group by 列直接取 key                              *)
 (*     - 聚合列由 eval_agg 计算                             *)
 (*************************************************************)
+
+
+(* Invariant:
+   - RAAggregate always produces one row per group
+   - group_by [] rows = [rows]
+   - Aggregate results are set-like (no duplicates)
+   - Aggregated relations are only compared, not used in arithmetic
+*)
 | ER_Aggregate :
     forall db
            (gcols : list ColName)
