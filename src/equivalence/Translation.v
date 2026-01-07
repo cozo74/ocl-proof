@@ -158,73 +158,6 @@ Definition eval_literal (t : tm) : option value :=
 
 
 
-Fixpoint lookup_table_schema
-  (S : Schema) (t : TableName) : option TableSchema :=
-  match S with
-  | [] => None
-  | ts :: S' =>
-      if String.eqb ts.(table_name) t
-      then Some ts
-      else lookup_table_schema S' t
-  end.
-
-
-
-
-Definition row_schema_of_table_schema
-  (ts : TableSchema) : RowSchema :=
-  map col_name ts.(table_cols).
-
-
-
-
-Fixpoint schema_of (sc : Schema) (q : ra_rel) : list ColName :=
-    match q with
-    | RAEmpty =>
-            [] 
-
-    | RAValues _ =>
-        ["elem"]
-
-    | RATable t =>
-        match lookup_table_schema sc t with
-        | Some ts => row_schema_of_table_schema ts
-        | None => []
-        end
-
-    | RATableSchema ts =>
-        map col_name ts.(table_cols)
-
-    | RASelect _ q1 =>
-        schema_of sc q1
-
-    | RAProject ps _ =>
-        map proj_name ps
-
-    | RACartesian q1 q2 => 
-        schema_of sc q1 ++ schema_of sc q2
-
-    | RAJoin _ q1 q2 =>
-        schema_of sc q1 ++ schema_of sc q2
-
-    | RAUnion q1 _ =>
-        schema_of sc q1
-
-    | RAIntersect q1 _ =>
-        schema_of sc q1
-
-    | RADiff q1 _ =>
-        schema_of sc q1
-
-    | RADistinct q1 =>
-        schema_of sc q1
-
-    | RAAggregate gcols aggs _ =>
-        gcols ++ map (fun '(newc, _, _) => newc) aggs
-    end.
-
-
-
 
 (* 取 schema 的最后一列 *)
 Definition last_col (cols : list ColName) : option ColName :=
@@ -386,7 +319,7 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
             (* 5) inv 结果应为对象级谓词集合 *)
             match gkSat with
             | [] =>
-
+(* 
                 (* 将 qSat 统一投影为 oid *)
                 let qSatOid :=
                 RAProject
@@ -398,9 +331,9 @@ Fixpoint translate_rel (M : UMLModel) (Gamma : varEnv) (t : tm) : option (ra_rel
                 (* 6) 差集：violating = AllOid \ SatOid *)
                 let qBad :=
                 RADiff qAllOid qSatOid
-                in
+                in *)
 
-                Some (qBad, [])
+                Some (qSat, [])
 
             | _ => None
             end

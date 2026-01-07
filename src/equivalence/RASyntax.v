@@ -126,3 +126,78 @@ Inductive ra_rel : Type :=
       list (ColName * aggop * ColName) ->  (* newCol := agg(op, col) *)
       ra_rel -> ra_rel.
 
+
+
+
+
+
+
+
+Fixpoint lookup_table_schema
+  (S : Schema) (t : TableName) : option TableSchema :=
+  match S with
+  | [] => None
+  | ts :: S' =>
+      if String.eqb ts.(table_name) t
+      then Some ts
+      else lookup_table_schema S' t
+  end.
+
+
+
+
+Definition row_schema_of_table_schema
+  (ts : TableSchema) : RowSchema :=
+  map col_name ts.(table_cols).
+
+
+    
+    
+
+
+Fixpoint schema_of (sc : Schema) (q : ra_rel) : list ColName :=
+  match q with
+  | RAEmpty =>
+          [] 
+
+  | RAValues _ =>
+      ["elem"]
+
+  | RATable t =>
+      match lookup_table_schema sc t with
+      | Some ts => row_schema_of_table_schema ts
+      | None => []
+      end
+
+  | RATableSchema ts =>
+      map col_name ts.(table_cols)
+
+  | RASelect _ q1 =>
+      schema_of sc q1
+
+  | RAProject ps _ =>
+      map proj_name ps
+
+  | RACartesian q1 q2 => 
+      schema_of sc q1 ++ schema_of sc q2
+
+  | RAJoin _ q1 q2 =>
+      schema_of sc q1 ++ schema_of sc q2
+
+  | RAUnion q1 _ =>
+      schema_of sc q1
+
+  | RAIntersect q1 _ =>
+      schema_of sc q1
+
+  | RADiff q1 _ =>
+      schema_of sc q1
+
+  | RADistinct q1 =>
+      schema_of sc q1
+
+  | RAAggregate gcols aggs _ =>
+      gcols ++ map (fun '(newc, _, _) => newc) aggs
+  end.
+
+    

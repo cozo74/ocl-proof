@@ -14,4 +14,6 @@ src/equivalence/OCLSemantic.v
 src/equivalence/RASyntax.v
 src/equivalence/RASemantic.v
 
+src/equivalence/Translation.v
+
 src/equivalence/Utils.v

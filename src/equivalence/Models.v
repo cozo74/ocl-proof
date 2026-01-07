@@ -371,6 +371,7 @@ Record Row : Type := {
 Definition TableInst := list Row.
 
 Record DBInstance : Type := {
+  schema : Schema;
   tables : string -> option  TableInst
 }.
 
@@ -581,6 +582,7 @@ Definition enc
   (OM : ObjectModel)
   : DBInstance :=
   {|
+    schema := umlToSchema M;
     tables :=
       fun tname =>
         match isClassTable M tname with

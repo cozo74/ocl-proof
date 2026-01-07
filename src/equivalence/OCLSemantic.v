@@ -877,3 +877,191 @@ Inductive cevalR : ObjectModel -> env -> tm -> value -> Prop :=
               E_NRCollect M E role tl out_tl ->
               E_NRCollect M E role (v :: tl) (vs ++ out_tl).
 
+
+
+
+
+
+(* provenance map: 记录某个变量名对应的 oid trace *)
+Definition provMap := total_map (list string).
+
+Record env_p : Type := {
+    base_env : env;
+    pmap     : provMap;
+    varList  : list string
+}.
+
+
+Definition get_env (Ep : env_p) : env :=
+  Ep.(base_env).
+
+
+Definition cur_prov (Ep : env_p) : option (list string) :=
+  match Ep.(varList) with
+  | [] => None
+  | tv :: _ => Some (Ep.(pmap) tv)
+  end.
+
+
+
+Definition push_cvar (var : string) (v : value) (p : list string) (Ep : env_p) : env_p :=
+  {|
+    base_env := t_update Ep.(base_env) var v;
+    pmap     := t_update Ep.(pmap) var p;
+    varList  := var :: Ep.(varList)
+  |}.
+
+
+
+
+
+
+Inductive cevalR_p : ObjectModel -> env_p -> tm -> list string -> value -> Prop :=
+
+
+
+
+    | EP_Lift :
+        forall M Ep t v,
+          cevalR M (get_env Ep) t v ->
+          cevalR_p M Ep t [] v
+
+
+
+
+
+    | EP_CAttr :
+        forall M Ep t p oid attr v,
+          cevalR_p M Ep t p (V_Object oid) ->
+          obj_attrs (objects M oid) attr = v ->
+          cevalR_p M Ep (CAttr t attr) (List.app p [oid]) v
+
+
+    | EP_CRole :
+        forall M Ep t p oid role r_oid,
+          cevalR_p M Ep t p (V_Object oid) ->
+          obj_role1 (objects M oid) role = r_oid ->
+          cevalR_p M Ep (CRole t role) (List.app p [oid]) (V_Object r_oid)
+
+
+    | EP_CNRole :
+        forall M Ep t p oid nrole oids,
+          cevalR_p M Ep t p (V_Object oid) ->
+          obj_rolen (objects M oid) nrole = oids ->
+          cevalR_p M Ep (CNRole t nrole) (List.app p [oid]) (V_Bag (map V_Object oids))
+
+
+
+    | EP_CBoolUn :
+        forall M Ep op t p v v',
+          cevalR_p M Ep t p v ->
+          bool_unop_sem op v = Some v' ->
+          cevalR_p M Ep (CBoolUn op t) p v'
+
+
+
+    | EP_CArithUn :
+        forall M Ep op t p v v',
+          cevalR_p M Ep t p v ->
+          arith_unop_sem op v = Some v' ->
+          cevalR_p M Ep (CArithUn op t) p v'
+
+    | EP_CArithUnRealUFloor :
+        forall M Ep t p r z,
+          cevalR_p M Ep t p (V_Real r) ->
+          Rfloor_real r z ->
+          cevalR_p M Ep (CArithUn UFloor t) p (V_Int z)
+
+
+    | EP_CArithUnRealURound :
+        forall M Ep t p r z,
+          cevalR_p M Ep t p (V_Real r) ->
+          Rround_real r z ->
+          cevalR_p M Ep (CArithUn URound t) p (V_Int z)
+
+
+    | EP_CStrUn :
+        forall M Ep op t p s s',
+          cevalR_p M Ep t p s ->
+          str_unop_sem op s = Some s' ->
+          cevalR_p M Ep (CStrUn op t) p s'
+
+
+
+
+    | EP_CBoolBin :
+        forall M Ep op t1 t2 v p,
+          cevalR M (get_env Ep) (CBoolBin op t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CBoolBin op t1 t2) p v
+
+
+
+    | EP_CCompBin :
+        forall M Ep op t1 t2 v p,
+          cevalR M (get_env Ep) (CCompBin op t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CCompBin op t1 t2) p v
+
+
+
+    | EP_CArithBin :
+        forall M Ep op t1 t2 v p,
+          cevalR M (get_env Ep) (CArithBin op t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CArithBin op t1 t2) p v
+
+
+
+    | EP_CStrBin :
+        forall M Ep op t1 t2 v p,
+          cevalR M (get_env Ep) (CStrBin op t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CStrBin op t1 t2) p v
+
+
+
+    | EP_CAggBin :
+        forall M Ep op t1 t2 v p,
+          cevalR M (get_env Ep) (CAggBin op t1 t2) v->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CAggBin op t1 t2) p v
+
+
+
+    (*  Bag 运算  *)
+
+    | EP_CUnion :
+        forall M Ep t1 t2 v p,
+          cevalR M (get_env Ep) (CUnion t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CUnion t1 t2) p v
+
+    | EP_CIntersect :
+        forall M Ep t1 t2 v p,
+          cevalR M (get_env Ep) (CIntersect t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CIntersect t1 t2) p v
+
+    | EP_CDifference :
+        forall M Ep t1 t2 v p,
+          cevalR M (get_env Ep) (CDifference t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CDifference t1 t2) p v
+
+    | EP_CSymDiff :
+        forall M Ep t1 t2 v p,
+          cevalR M (get_env Ep) (CSymDiff t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CSymDiff t1 t2) p v
+
+
+
+
+
+
+.
+
+
+
+
