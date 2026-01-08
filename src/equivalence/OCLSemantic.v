@@ -730,10 +730,11 @@ Inductive cevalR : ObjectModel -> env -> tm -> value -> Prop :=
               cevalR M (t_update E var v) body (V_Bool false) ->
               E_Forall M E var body (v :: tl) false
 
-      with E_Exists :
-            ObjectModel -> env -> string -> tm ->
-            list value -> bool -> Prop :=
 
+      with E_Exists :
+          ObjectModel -> env -> string -> tm ->
+          list value -> bool -> Prop :=
+        
         | E_ExistsNil :
             forall M E var body,
               E_Exists M E var body [] false
@@ -743,11 +744,19 @@ Inductive cevalR : ObjectModel -> env -> tm -> value -> Prop :=
               cevalR M (t_update E var v) body (V_Bool true) ->
               E_Exists M E var body (v :: tl) true
         
-        | E_ExistsConsFalse :
+        | E_ExistsConsFalseTrue :
             forall M E var body v tl,
               cevalR M (t_update E var v) body (V_Bool false) ->
               E_Exists M E var body tl true ->
               E_Exists M E var body (v :: tl) true
+        
+        | E_ExistsConsFalseFalse :
+            forall M E var body v tl,
+              cevalR M (t_update E var v) body (V_Bool false) ->
+              E_Exists M E var body tl false ->
+              E_Exists M E var body (v :: tl) false
+            
+        
 
       with E_Select :
           ObjectModel -> env -> string -> tm ->
@@ -882,6 +891,20 @@ Inductive cevalR : ObjectModel -> env -> tm -> value -> Prop :=
 
 
 
+
+
+
+
+
+
+(* *************************************************************** *)
+(*                       带trace的关系语义定义                        *)
+(* *************************************************************** *)
+
+
+
+
+
 (* provenance map: 记录某个变量名对应的 oid trace *)
 Definition provMap := total_map (list string).
 
@@ -914,6 +937,36 @@ Definition push_cvar (var : string) (v : value) (p : list string) (Ep : env_p) :
 
 
 
+Inductive prov_merge : list string -> list string -> list string -> Prop :=
+  | PM_both_empty :
+      prov_merge [] [] []
+  
+  | PM_left :
+      forall p,
+        p <> [] ->
+        prov_merge p [] p
+  
+  | PM_right :
+      forall p,
+        p <> [] ->
+        prov_merge [] p p
+  
+  | PM_equal :
+      forall p,
+        p <> [] ->
+        prov_merge p p p.
+  
+
+        
+
+
+
+
+
+
+
+
+
 
 
 Inductive cevalR_p : ObjectModel -> env_p -> tm -> list string -> value -> Prop :=
@@ -925,6 +978,39 @@ Inductive cevalR_p : ObjectModel -> env_p -> tm -> list string -> value -> Prop 
         forall M Ep t v,
           cevalR M (get_env Ep) t v ->
           cevalR_p M Ep t [] v
+
+
+
+  
+    | EP_CContext :
+        forall M Ep C body,
+          (* 对类 C 的每个 oid，body 在 self=oid 且 prov=[oid] 下求值为 true *)
+          (forall oid,
+              In oid (filter
+                        (fun o =>
+                            String.eqb (objects M o).(obj_class) C)
+                        (all_oids M)) ->   (* 你这里用你自己的“类到对象列表”的取法 *)
+              cevalR_p M
+                (push_cvar "self" (V_Object oid) [] Ep)
+                body
+                []
+                (V_Bool true)) ->
+          cevalR_p M Ep (CContext C body) [] (V_Bool true)
+    
+
+
+    | EP_CVar :
+        forall M Ep var v p,
+          Ep.(base_env) var = v ->
+          Ep.(pmap) var = p ->
+          cevalR_p M Ep (CVar var) p v
+    
+
+    | EP_CSelf :
+        forall M Ep oid p,
+          Ep.(base_env) "self" = V_Object oid ->
+          Ep.(pmap) "self" = p ->
+          cevalR_p M Ep CSelf p (V_Object oid)
 
 
 
@@ -990,75 +1076,238 @@ Inductive cevalR_p : ObjectModel -> env_p -> tm -> list string -> value -> Prop 
 
 
     | EP_CBoolBin :
-        forall M Ep op t1 t2 v p,
-          cevalR M (get_env Ep) (CBoolBin op t1 t2) v ->
-          cur_prov Ep = Some p ->
-          cevalR_p M Ep (CBoolBin op t1 t2) p v
+        forall M Ep op t1 t2 p1 p2 p b1 b2 b,
+          cevalR_p M Ep t1 p1 (V_Bool b1) ->
+          cevalR_p M Ep t2 p2 (V_Bool b2) ->
+          bool_binop_sem op b1 b2 = b ->
+          prov_merge p1 p2 p ->
+          cevalR_p M Ep (CBoolBin op t1 t2) p (V_Bool b)
 
 
 
     | EP_CCompBin :
-        forall M Ep op t1 t2 v p,
-          cevalR M (get_env Ep) (CCompBin op t1 t2) v ->
-          cur_prov Ep = Some p ->
-          cevalR_p M Ep (CCompBin op t1 t2) p v
+        forall M Ep op t1 t2 p1 p2 p v1 v2 b,
+          cevalR_p M Ep t1 p1 v1 ->
+          cevalR_p M Ep t2 p2 v2 ->
+          comp_binop_sem op v1 v2 = Some b ->
+          prov_merge p1 p2 p ->
+          cevalR_p M Ep (CCompBin op t1 t2) p (V_Bool b)
 
 
 
     | EP_CArithBin :
-        forall M Ep op t1 t2 v p,
-          cevalR M (get_env Ep) (CArithBin op t1 t2) v ->
-          cur_prov Ep = Some p ->
+        forall M Ep op t1 t2 p1 p2 p v1 v2 v,
+          cevalR_p M Ep t1 p1 v1 ->
+          cevalR_p M Ep t2 p2 v2 ->
+          arith_binop_sem op v1 v2 = Some v ->
+          prov_merge p1 p2 p ->
           cevalR_p M Ep (CArithBin op t1 t2) p v
 
 
 
     | EP_CStrBin :
-        forall M Ep op t1 t2 v p,
-          cevalR M (get_env Ep) (CStrBin op t1 t2) v ->
-          cur_prov Ep = Some p ->
-          cevalR_p M Ep (CStrBin op t1 t2) p v
+        forall M Ep op t1 t2 p1 p2 p s1 s2 s,
+          cevalR_p M Ep t1 p1 s1 ->
+          cevalR_p M Ep t2 p2 s2 ->
+          str_binop_sem op s1 s2 = Some s ->
+          prov_merge p1 p2 p ->
+          cevalR_p M Ep (CStrBin op t1 t2) p s
 
 
 
     | EP_CAggBin :
-        forall M Ep op t1 t2 v p,
-          cevalR M (get_env Ep) (CAggBin op t1 t2) v->
-          cur_prov Ep = Some p ->
+        forall M Ep op t1 t2 p1 p2 p v1 v2 v,
+          cevalR_p M Ep t1 p1 v1 ->
+          cevalR_p M Ep t2 p2 v2 ->
+          agg_binop_sem op v1 v2 = Some v ->
+          prov_merge p1 p2 p ->
           cevalR_p M Ep (CAggBin op t1 t2) p v
 
 
 
-    (*  Bag 运算  *)
+
 
     | EP_CUnion :
-        forall M Ep t1 t2 v p,
+        forall M Ep t1 t2 p1 p2 p v,
+          cevalR_p M Ep t1 p1 v ->
+          cevalR_p M Ep t2 p2 v ->
           cevalR M (get_env Ep) (CUnion t1 t2) v ->
-          cur_prov Ep = Some p ->
+          prov_merge p1 p2 p ->
           cevalR_p M Ep (CUnion t1 t2) p v
 
     | EP_CIntersect :
-        forall M Ep t1 t2 v p,
+        forall M Ep t1 t2 p1 p2 p v,
+          cevalR_p M Ep t1 p1 v ->
+          cevalR_p M Ep t2 p2 v ->
           cevalR M (get_env Ep) (CIntersect t1 t2) v ->
-          cur_prov Ep = Some p ->
+          prov_merge p1 p2 p ->
           cevalR_p M Ep (CIntersect t1 t2) p v
 
     | EP_CDifference :
-        forall M Ep t1 t2 v p,
+        forall M Ep t1 t2 p1 p2 p v,
+          cevalR_p M Ep t1 p1 v ->
+          cevalR_p M Ep t2 p2 v ->
           cevalR M (get_env Ep) (CDifference t1 t2) v ->
-          cur_prov Ep = Some p ->
+          prov_merge p1 p2 p ->
           cevalR_p M Ep (CDifference t1 t2) p v
 
     | EP_CSymDiff :
-        forall M Ep t1 t2 v p,
+        forall M Ep t1 t2 p1 p2 p v,
+          cevalR_p M Ep t1 p1 v ->
+          cevalR_p M Ep t2 p2 v ->
           cevalR M (get_env Ep) (CSymDiff t1 t2) v ->
-          cur_prov Ep = Some p ->
+          prov_merge p1 p2 p ->
           cevalR_p M Ep (CSymDiff t1 t2) p v
 
 
 
+    | EP_CIncludes :
+        forall M Ep t1 t2 v p,
+          cevalR M (get_env Ep) (CIncludes t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CIncludes t1 t2) p v
 
 
+
+    | EP_CIncludesAll :
+        forall M Ep t1 t2 v p,
+          cevalR M (get_env Ep) (CIncludesAll t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CIncludesAll t1 t2) p v
+
+
+    | EP_CExcludes :
+        forall M Ep t1 t2 v p,
+          cevalR M (get_env Ep) (CExcludes t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CExcludes t1 t2) p v
+
+
+
+    | EP_CExcludesAll :
+        forall M Ep t1 t2 v p,
+          cevalR M (get_env Ep) (CExcludesAll t1 t2) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CExcludesAll t1 t2) p v
+
+
+    | EP_CIsEmpty :
+        forall M Ep t v p,
+          cevalR M (get_env Ep) (CIsEmpty t) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CIsEmpty t) p v
+
+    | EP_CNotEmpty :
+        forall M Ep t v p,
+          cevalR M (get_env Ep) (CNotEmpty t) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CNotEmpty t) p v
+
+    | EP_CIsUnique :
+        forall M Ep t v p,
+          cevalR M (get_env Ep) (CIsUnique t) v ->
+          cur_prov Ep = Some p ->
+          cevalR_p M Ep (CIsUnique t) p v
+
+
+
+
+  
+
+    | EP_CForAll :
+        forall M Ep bag_tm var body vs b p,
+          cevalR_p M Ep bag_tm p (V_Bag vs) ->
+          E_Forall_p M Ep var body vs p b ->
+          cevalR_p M Ep (CForAll bag_tm var body) p (V_Bool b)
+      
+
+    | EP_CExists :
+        forall M Ep bag_tm var body vs b p,
+          cevalR_p M Ep bag_tm p (V_Bag vs) ->
+          E_Exists_p M Ep var body vs p b  ->
+          cevalR_p M Ep (CExists bag_tm var body) p (V_Bool b)
+      
+
+    | EP_CSelect :
+        forall M Ep bag_tm var body vs vs' p,
+          cevalR_p M Ep bag_tm p (V_Bag vs) ->
+          E_Select_p M Ep var body vs p vs' ->
+          cevalR_p M Ep (CSelect bag_tm var body) p (V_Bag vs')
+    
+
+
+
+
+    with E_Forall_p :
+        ObjectModel -> env_p -> string -> tm ->
+        list value -> list string -> bool -> Prop :=
+      
+      | EP_ForallNil :
+          forall M Ep var body p,
+            E_Forall_p M Ep var body [] p true
+      
+      | EP_ForallConsTrue :
+          forall M Ep var body v tl p,
+            cevalR_p M (push_cvar var v p Ep) body p (V_Bool true) ->
+            E_Forall_p M Ep var body tl p true ->
+            E_Forall_p M Ep var body (v :: tl) p true
+      
+      | EP_ForallConsFalse :
+          forall M Ep var body v tl p,
+            cevalR_p M (push_cvar var v p Ep) body p (V_Bool false) ->
+            E_Forall_p M Ep var body (v :: tl) p false
+      
+
+
+
+
+      with E_Exists_p :
+        ObjectModel -> env_p -> string -> tm ->
+        list value -> list string -> bool -> Prop :=
+
+        | EP_ExistsNil :
+            forall M Ep var body p,
+              E_Exists_p M Ep var body [] p false
+
+        | EP_ExistsConsTrue :
+            forall M Ep var body v tl p,
+              cevalR_p M (push_cvar var v p Ep) body p (V_Bool true) ->
+              E_Exists_p M Ep var body (v :: tl) p true
+
+        | EP_ExistsConsFalseTrue :
+            forall M Ep var body v tl p,
+              cevalR_p M (push_cvar var v p Ep) body p (V_Bool false) ->
+              E_Exists_p M Ep var body tl p true ->
+              E_Exists_p M Ep var body (v :: tl) p true
+
+        | EP_ExistsConsFalseFalse :
+            forall M Ep var body v tl p,
+              cevalR_p M (push_cvar var v p Ep) body p (V_Bool false) ->
+              E_Exists_p M Ep var body tl p false ->
+              E_Exists_p M Ep var body (v :: tl) p false
+
+        
+
+      with E_Select_p :
+          ObjectModel -> env_p -> string -> tm ->
+          list value -> list string -> list value -> Prop :=
+        
+        | EP_SelectNil :
+            forall M Ep var body p,
+              E_Select_p M Ep var body [] p []
+        
+        | EP_SelectConsKeep :
+            forall M Ep var body v tl out_tl p,
+              cevalR_p M (push_cvar var v p Ep) body p (V_Bool true) ->
+              E_Select_p M Ep var body tl p out_tl ->
+              E_Select_p M Ep var body (v :: tl) p (v :: out_tl)
+        
+        | EP_SelectConsDrop :
+            forall M Ep var body v tl out_tl p,
+              cevalR_p M (push_cvar var v p Ep) body p (V_Bool false) ->
+              E_Select_p M Ep var body tl p out_tl ->
+              E_Select_p M Ep var body (v :: tl) p out_tl
+        
 
 .
 
