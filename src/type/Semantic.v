@@ -246,8 +246,8 @@ Definition bag_symdiff (xs ys : list value) : list value :=
 
 
 
-Definition bag_includes (xs ys : list value) : bool :=
-  existsb (fun x => existsb (value_eqb x) xs) ys.
+Definition bag_includes (xs : list value) (y : value) : bool :=
+  existsb (value_eqb y) xs.
 
 
 Definition bag_includes_all (xs ys : list value) : bool :=
@@ -255,8 +255,9 @@ Definition bag_includes_all (xs ys : list value) : bool :=
 
 
 
-Definition bag_excludes (xs ys : list value) : bool :=
-  negb (bag_includes xs ys).
+Definition bag_excludes (xs : list value) (y : value): bool :=
+  negb (bag_includes xs y).
+  
 
 Definition bag_excludes_all (xs ys : list value) : bool :=
   forallb (fun y => negb (existsb (value_eqb y) xs)) ys.
@@ -627,10 +628,10 @@ Inductive cevalR : obj_model -> env -> tm -> value -> Prop :=
   (*  Bag 谓词  *)
 
       | E_CIncludes :
-          forall M E t1 t2 xs ys,
+          forall M E t1 t2 xs y,
             cevalR M E t1 (V_Bag xs) ->
-            cevalR M E t2 (V_Bag ys) ->
-            cevalR M E (CIncludes t1 t2) (V_Bool (bag_includes xs ys))
+            cevalR M E t2 y ->
+            cevalR M E (CIncludes t1 t2) (V_Bool (bag_includes xs y))
 
       | E_CIncludesAll :
           forall M E t1 t2 xs ys,
@@ -640,10 +641,10 @@ Inductive cevalR : obj_model -> env -> tm -> value -> Prop :=
 
 
       | E_CExcludes :
-          forall M E t1 t2 xs ys,
+          forall M E t1 t2 xs y,
             cevalR M E t1 (V_Bag xs) ->
-            cevalR M E t2 (V_Bag ys) ->
-            cevalR M E (CExcludes t1 t2) (V_Bool (bag_excludes xs ys))
+            cevalR M E t2 y ->
+            cevalR M E (CExcludes t1 t2) (V_Bool (bag_excludes xs y))
 
       | E_CExcludesAll :
           forall M E t1 t2 xs ys,
@@ -791,9 +792,9 @@ Inductive cevalR : obj_model -> env -> tm -> value -> Prop :=
               E_Forall M E var body (v :: tl) false
 
       with E_Exists :
-            obj_model -> env -> string -> tm ->
-            list value -> bool -> Prop :=
-
+          obj_model -> env -> string -> tm ->
+          list value -> bool -> Prop :=
+        
         | E_ExistsNil :
             forall M E var body,
               E_Exists M E var body [] false
@@ -803,11 +804,17 @@ Inductive cevalR : obj_model -> env -> tm -> value -> Prop :=
               cevalR M (t_update E var v) body (V_Bool true) ->
               E_Exists M E var body (v :: tl) true
         
-        | E_ExistsConsFalse :
+        | E_ExistsConsFalseTrue :
             forall M E var body v tl,
               cevalR M (t_update E var v) body (V_Bool false) ->
               E_Exists M E var body tl true ->
               E_Exists M E var body (v :: tl) true
+        
+        | E_ExistsConsFalseFalse :
+            forall M E var body v tl,
+              cevalR M (t_update E var v) body (V_Bool false) ->
+              E_Exists M E var body tl false ->
+              E_Exists M E var body (v :: tl) false
 
       with E_Select :
           obj_model -> env -> string -> tm ->
