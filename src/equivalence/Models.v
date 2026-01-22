@@ -444,8 +444,33 @@ Record TableSchema : Type := {
 
 }.
 
-(* 整个数据库 Schema *)
-Definition Schema := list TableSchema.
+
+Definition Schema_data : Type := list TableSchema.
+
+
+
+
+
+(* TableSchema 良构：列名唯一 *)
+Definition wf_TableSchema (ts : TableSchema) : Prop :=
+  NoDup (map col_name (table_cols ts)).
+
+
+
+(* Schema 良构：表名唯一 + 每张表列名唯一 *)
+Definition wf_Schema (sc : Schema_data) : Prop :=
+  NoDup (map table_name sc) /\
+  Forall wf_TableSchema sc.
+
+
+
+
+Record Schema : Type := {
+  sc_data : Schema_data;
+  sc_wf   : wf_Schema sc_data
+}.
+
+
 
 
 
@@ -454,15 +479,83 @@ Definition Schema := list TableSchema.
 (*                数据库实例 DBInstance 定义                   *)
 (*************************************************************)
 
+
+
+
+
 Definition RowData : Type := list (string * I_ra).
 
 
 
+Record DBInstance_data : Type := {
+  db_tables : string -> option (list RowData)
+}.
 
-Definition TableInstRaw : Type := list RowData.
 
-Record DBInstanceRaw : Type := {
-  tables : string -> option (list RowData)
+
+(* 辅助函数：从 RowData 查列值 *)
+Fixpoint lookup_row (cn : string) (r : RowData) : option I_ra :=
+  match r with
+  | [] => None
+  | (k,v)::tl => if String.string_dec k cn then Some v else lookup_row cn tl
+  end.
+
+
+(* 辅助函数：从Schema 中查表” *)
+Fixpoint lookup_table (sc : Schema_data) (tname : string) : option TableSchema :=
+  match sc with
+  | [] => None
+  | ts :: tl =>
+      if String.string_dec (table_name ts) tname then Some ts else lookup_table tl tname
+  end.
+
+
+(* 严格行（域精确等于表列集合） *)
+Definition row_domain (r : RowData) : list string :=
+  map fst r.
+
+
+
+
+(* Row 严格良构：域=列集合 + 行内无重复 + 类型匹配 *)
+Definition wf_Row_strict (oidSpace : oid_of) (ts : TableSchema) (r : RowData) : Prop :=
+  NoDup (row_domain r) /\
+  (forall cn,
+      In cn (row_domain r) <->
+      exists col, In col (table_cols ts) /\ col_name col = cn) /\
+  (forall col v,
+      In col (table_cols ts) ->
+      lookup_row (col_name col) r = Some v ->
+      I_ra_has_type oidSpace v (col_ty col)).
+
+Definition wf_TableInst (oidSpace : oid_of) (ts : TableSchema) (rows : list RowData) : Prop :=
+  Forall (wf_Row_strict oidSpace ts) rows.
+
+
+
+
+
+(* DBInstance 总 wf：域受 Schema 限制 + 每张表实例良构 *)
+Definition wf_DBInstance (oidSpace : oid_of) (sc : Schema_data) (db : DBInstance_data) : Prop :=
+  let tbl := db_tables db in
+  (* 表有定义 -> schema 里确实存在该表 *)
+  (forall tname rows,
+      tbl tname = Some rows ->
+      exists ts, lookup_table sc tname = Some ts)
+  /\
+  (* 对 schema 中每张表：若 db 有实例，则实例必须符合表结构 *)
+  (forall tname ts rows,
+      lookup_table sc tname = Some ts ->
+      tbl tname = Some rows ->
+      wf_TableInst oidSpace ts rows).
+
+
+
+
+
+Record DBInstance (oidSpace : oid_of) (SC : Schema) : Type := {
+  db_data : DBInstance_data;
+  db_wf   : wf_DBInstance oidSpace (sc_data SC) db_data
 }.
 
 
@@ -471,13 +564,22 @@ Record DBInstanceRaw : Type := {
 
 
 
+
+
+
+
+
+
 (*************************************************************)
-(*        ObjectModel 类 → 数据库 Schema 的转换规则             *)
+(*        ObjectModel 类 → 数据库 Schema 的对应关系             *)
 (*************************************************************)
 
 
-(* 类型与值的映射 *)
-(* ---------- type mapping: T_b -> T_ra ---------- *)
+
+(* 常量：类表的 oid 列名 *)
+Definition oid_col : string := "oid".
+
+(* 将 basic type 映射到 RA 列类型 *)
 Definition enc_Tb (t : T_b) : T_ra :=
   match t with
   | Tb_Bool   => Tra_Bool
@@ -486,7 +588,168 @@ Definition enc_Tb (t : T_b) : T_ra :=
   | Tb_String => Tra_String
   end.
 
-(* ---------- value mapping: I_b -> I_ra ---------- *)
+(* 在表中按列名查找列 *)
+Fixpoint lookup_col (cn : string) (cols : list Column) : option Column :=
+  match cols with
+  | [] => None
+  | c :: tl =>
+      if String.string_dec (col_name c) cn then Some c else lookup_col cn tl
+  end.
+
+(* 在 schema 中按表名查找表 *)
+Fixpoint lookup_tableS (sc : Schema_data) (tname : string) : option TableSchema :=
+  match sc with
+  | [] => None
+  | ts :: tl =>
+      if String.string_dec (table_name ts) tname then Some ts else lookup_tableS tl tname
+  end.
+
+
+(* 
+一个类 c 对应一张表 ts，满足：
+  - table_name ts = c
+  - oid 列存在且类型为 Tra_Object c
+  - 对 ATT_c c 中每个属性 a：存在同名列，类型是 enc_Tb (att_type a)
+
+*)
+Definition ClassTable_ok (M : object_model) (c : class_name) (ts : TableSchema) : Prop :=
+  table_name ts = c /\
+  (* oid 列 *)
+  exists col_oid,
+    lookup_col oid_col (table_cols ts) = Some col_oid /\
+    col_ty col_oid = Tra_Object c /\
+  (* 属性列 *)
+  (forall attrs a,
+      ATT_c (data M) c = Some attrs ->
+      In a attrs ->
+      exists col_a,
+        lookup_col (att_name a) (table_cols ts) = Some col_a /\
+        col_ty col_a = enc_Tb (att_type a)).
+
+
+(* 无多余列：  表中的列集合恰好等于 oid + 属性列集合（不多不少，类型是 enc_Tb (att_type a) *)
+Definition ClassTable_no_extra_cols (M : object_model) (c : class_name) (ts : TableSchema) : Prop :=
+  forall cn col,
+    lookup_col cn (table_cols ts) = Some col ->
+    cn = oid_col \/
+    exists attrs a,
+      ATT_c (data M) c = Some attrs /\
+      In a attrs /\
+      cn = att_name a.
+
+
+(* 
+二元关联 asso 对应一张表 ts，满足：
+  - table_name ts = asso
+  - 若 associates asso = <c1,c2> 且 roles asso = <r1,r2>：
+  - 表包含列 r1 : Tra_Object c1
+  - 表包含列 r2 : Tra_Object c2
+*)
+Definition AssocTable_ok (M : object_model) (asso : assoc_name) (ts : TableSchema) : Prop :=
+  table_name ts = asso /\
+  exists ap rp,
+    associates (data M) asso = Some ap /\
+    roles (data M) asso = Some rp /\
+    (* role r1 列 *)
+    exists col1,
+      lookup_col (r1 rp) (table_cols ts) = Some col1 /\
+      col_ty col1 = Tra_Object (c1 ap) /\
+    (* role r2 列 *)
+    exists col2,
+      lookup_col (r2 rp) (table_cols ts) = Some col2 /\
+      col_ty col2 = Tra_Object (c2 ap).
+
+
+Definition AssocTable_no_extra_cols (M : object_model) (asso : assoc_name) (ts : TableSchema) : Prop :=
+  forall cn col,
+    lookup_col cn (table_cols ts) = Some col ->
+    exists ap rp,
+      associates (data M) asso = Some ap /\
+      roles (data M) asso = Some rp /\
+      (cn = r1 rp \/ cn = r2 rp).
+
+    
+
+
+(* 
+- 对每个 c ∈ CLASS(M)：schema 里存在表名为 c 的表，满足 ClassTable_ok
+- 对每个 asso ∈ ASSOC(M)：schema 里存在表名为 asso 的表，满足 AssocTable_ok
+- （可选）schema 中的每张表名要么是类名要么是关联名（不多余表）
+*)
+Definition EncSchema (M : object_model) (sc : Schema_data) : Prop :=
+  (* 每个类都有对应表 *)
+  (forall c,
+      In c (CLASS (data M)) ->
+      exists ts,
+        lookup_tableS sc c = Some ts /\
+        ClassTable_ok M c ts)
+  /\
+  (* 每个关联都有对应表 *)
+  (forall asso,
+      In asso (ASSOC (data M)) ->
+      exists ts,
+        lookup_tableS sc asso = Some ts /\
+        AssocTable_ok M asso ts)
+  /\
+  (* 可选：schema 不包含额外表 *)
+  (forall tname ts,
+      lookup_tableS sc tname = Some ts ->
+      In tname (CLASS (data M)) \/ In tname (ASSOC (data M))).
+
+
+
+
+Definition EncSchemaW (M : object_model) (SC : Schema) : Prop :=
+  EncSchema M (sc_data SC).
+
+
+
+
+
+  Definition ClassTable_ok_strong (M : object_model) (c : class_name) (ts : TableSchema) : Prop :=
+  ClassTable_ok M c ts /\ ClassTable_no_extra_cols M c ts.
+
+Definition AssocTable_ok_strong (M : object_model) (asso : assoc_name) (ts : TableSchema) : Prop :=
+  AssocTable_ok M asso ts /\ AssocTable_no_extra_cols M asso ts.
+
+Definition EncSchema_strong (M : object_model) (sc : Schema_data) : Prop :=
+  (* 每个类都有对应表（且列不多不少） *)
+  (forall c,
+      In c (CLASS (data M)) ->
+      exists ts,
+        lookup_tableS sc c = Some ts /\
+        ClassTable_ok_strong M c ts)
+  /\
+  (* 每个关联都有对应表（且列不多不少） *)
+  (forall asso,
+      In asso (ASSOC (data M)) ->
+      exists ts,
+        lookup_tableS sc asso = Some ts /\
+        AssocTable_ok_strong M asso ts)
+  /\
+  (* schema 不包含额外表 *)
+  (forall tname ts,
+      lookup_tableS sc tname = Some ts ->
+      In tname (CLASS (data M)) \/ In tname (ASSOC (data M))).
+
+
+
+
+Definition EncSchemaW_strong (M : object_model) (SC : Schema) : Prop :=
+  EncSchema_strong M (sc_data SC).
+
+
+
+
+
+
+
+
+(*************************************************************)
+(*           SystemState → DBInstance 的对应关系               *)
+(*************************************************************)
+
+(* I_b -> I_ra *)
 Definition enc_Ib (v : I_b) : I_ra :=
   match v with
   | Ib_Bool b   => Ira_Bool b
@@ -496,132 +759,122 @@ Definition enc_Ib (v : I_b) : I_ra :=
   end.
 
 
-  (* 表名与列名约定 *)
-Definition oid_col : string := "oid".
-
-Definition tbl_class (c : class_name) : string := c.
-Definition tbl_assoc (asso : assoc_name) : string := asso.
 
 
-(* 生成 Class 表 schema *)
-Definition col_oid (c : class_name) : Column :=
-  {| col_name := oid_col; col_ty := Tra_Object c |}.
+Definition ClassObjectRow_ok
+  (M : object_model)
+  (S : system_state_data)
+  (c : class_name)
+  (o : oid)
+  (r : RowData) : Prop :=
 
-Definition col_of_attr (a : attr_sig) : Column :=
-  {| col_name := att_name a; col_ty := enc_Tb (att_type a) |}.
-
-Definition class_table_schema (M : object_model) (c : class_name) : TableSchema :=
-  match (ATT_c (data M)) c with
-  | Some attrs =>
-      {| table_name := tbl_class c
-       ; table_cols := col_oid c :: map col_of_attr attrs |}
-  | None =>
-      (* 在良构 object_model 下该分支对 In c CLASS 不应出现；
-         这里给一个防御性默认值 *)
-      {| table_name := tbl_class c
-       ; table_cols := [col_oid c] |}
-  end.
-
-
-
-(* 生成 Assoc 表 schema（二元关联） *)
-
-Definition assoc_table_schema (M : object_model) (asso : assoc_name) : TableSchema :=
-  match associates (data M) asso, roles (data M) asso with
-  | Some ap, Some rp =>
-      {| table_name := tbl_assoc asso
-       ; table_cols :=
-           [ {| col_name := r1 rp; col_ty := Tra_Object (c1 ap) |}
-           ; {| col_name := r2 rp; col_ty := Tra_Object (c2 ap) |} ] |}
-  | _, _ =>
-      (* 良构模型下 as∈ASSOC 时不应发生；防御性默认 *)
-      {| table_name := tbl_assoc asso; table_cols := [] |}
-  end.
-
-
-(* 总 Schema *)
-Definition enc_schema (M : object_model) : Schema :=
-  List.app (map (class_table_schema M) (CLASS (data M))) (map (assoc_table_schema M) (ASSOC (data M))).
+  (* oid 列 *)
+  lookup_row oid_col r = Some (Ira_Object o)
+  /\
+  (* 属性列 *)
+  (forall attrs a v,
+      ATT_c (data M) c = Some attrs ->
+      In a attrs ->
+      sigma_ATT S c o (att_name a) = Some v ->
+      lookup_row (att_name a) r = Some (enc_Ib v))
+  /\
+  (* 不出现“幽灵属性列” *)
+  (forall cn v,
+      lookup_row cn r = Some v ->
+      cn = oid_col \/
+      exists attrs a,
+        ATT_c (data M) c = Some attrs /\
+        In a attrs /\
+        cn = att_name a).
 
 
 
 
+Definition ClassTableInst_ok
+  (M : object_model)
+  (S : system_state_data)
+  (c : class_name)
+  (rows : list RowData) : Prop :=
 
-  
-
-
-
-(*************************************************************)
-(*           SystemState → DBInstance 的转换规则               *)
-(*************************************************************)
-
-
-
-(* ---------- 1) 构造 class 表中的一行（稀疏：缺属性就不写该列） ---------- *)
-Definition mk_class_row_sparse
-  (S : system_state_data) (c : class_name) (attrs : list attr_sig) (o : oid)
-  : RowData :=
-  (oid_col, Ira_Object o)
-  ::
-  fold_right
-    (fun a acc =>
-       match sigma_ATT S c o (att_name a) with
-       | Some vb => (att_name a, enc_Ib vb) :: acc
-       | None => acc
-       end)
-    []
-    attrs.
+  (* 覆盖性：每个对象都有一行 *)
+  (forall o os,
+      sigma_CLASS S c = Some os ->
+      In o os ->
+      exists r, In r rows /\ ClassObjectRow_ok M S c o r)
+  /\
+  (* 反向性：每行来自某个对象 *)
+  (forall r,
+      In r rows ->
+      exists o os,
+        sigma_CLASS S c = Some os /\
+        In o os /\
+        ClassObjectRow_ok M S c o r).
+      
 
 
+Definition AssocLinkRow_ok
+  (M : object_model)
+  (asso : assoc_name)
+  (l : oid * oid)
+  (r : RowData) : Prop :=
 
-(* ---------- 2) 构造 assoc 表中的一行 ---------- *)
-Definition mk_assoc_row_data (rp : role_pair) (l : oid * oid) : RowData :=
-  [ (r1 rp, Ira_Object (fst l))
-  ; (r2 rp, Ira_Object (snd l)) ].
-
-
-
-
-(* ---------- 3) 生成某个 class 表的实例 ---------- *)
-Definition class_table_inst_raw
-  (M : object_model) (S : system_state_data) (c : class_name)
-  : option (list RowData) :=
-  match sigma_CLASS S c with
-  | None => None
-  | Some os =>
-      let attrs :=
-        match ATT_c (data M) c with
-        | Some asigs => asigs
-        | None => []   (* 防御：无属性声明就只写 oid *)
-        end
-      in
-      Some (map (fun o => mk_class_row_sparse S c attrs o) os)
-  end.
+  exists rp,
+    roles (data M) asso = Some rp /\
+    lookup_row (r1 rp) r = Some (Ira_Object (fst l)) /\
+    lookup_row (r2 rp) r = Some (Ira_Object (snd l)).
 
 
 
+Definition AssocTableInst_ok
+  (M : object_model)
+  (S : system_state_data)
+  (asso : assoc_name)
+  (rows : list RowData) : Prop :=
 
-  
-(* ---------- 4) 生成某个 assoc 表的实例 ---------- *)
-Definition assoc_table_inst_raw
-  (M : object_model) (S : system_state_data) (asso : assoc_name)
-  : option (list RowData) :=
-  match sigma_ASSOC S asso, roles (data M) asso with
-  | Some ls, Some rp =>
-      Some (map (mk_assoc_row_data rp) ls)
-  | _, _ => None
-  end.
+  (* 覆盖性 *)
+  (forall l ls,
+      sigma_ASSOC S asso = Some ls ->
+      In l ls ->
+      exists r, In r rows /\ AssocLinkRow_ok M asso l r)
+  /\
+  (* 反向性 *)
+  (forall r,
+      In r rows ->
+      exists l ls,
+        sigma_ASSOC S asso = Some ls /\
+        In l ls /\
+        AssocLinkRow_ok M asso l r).
 
-(* ---------- 5) 最终编码：SystemState -> DBInstanceRaw ---------- *)
-Definition enc_db_raw (M : object_model) (S : system_state_data) : DBInstanceRaw :=
-  {| tables :=
-       fun tname =>
-         (* 先尝试 class 表 *)
-         if in_dec String.string_dec tname (CLASS (data M)) then
-           class_table_inst_raw M S tname
-         else if in_dec String.string_dec tname (ASSOC (data M)) then
-           assoc_table_inst_raw M S tname
-         else
-           None
-  |}.
+
+
+
+Definition EncDB
+  (M : object_model)
+  (S : system_state_data)
+  (sc : Schema_data)
+  (db : DBInstance_data) : Prop :=
+
+  (* 类表一致 *)
+  (forall c ts rows,
+      In c (CLASS (data M)) ->
+      lookup_table sc c = Some ts ->
+      db_tables db c = Some rows ->
+      ClassTableInst_ok M S c rows)
+  /\
+  (* 关联表一致 *)
+  (forall asso ts rows,
+      In asso (ASSOC (data M)) ->
+      lookup_table sc asso = Some ts ->
+      db_tables db asso = Some rows ->
+      AssocTableInst_ok M S asso rows).
+
+
+
+Definition EncDBW
+  (M : object_model)
+  (oidSpace : oid_of)
+  (SS : system_state M oidSpace)
+  (SC : Schema)
+  (DB : DBInstance oidSpace SC) : Prop :=
+  EncDB M (st M oidSpace SS) (sc_data SC) ( db_data oidSpace SC DB).
 
