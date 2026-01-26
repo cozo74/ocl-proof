@@ -41,8 +41,8 @@ Inductive vhas_type_h : I_h -> T_h -> Prop :=
         vhas_type_h (Ih_Basic b) (Th_Basic tb)
 
     | VHTH_Object :
-        forall o cn,
-        vhas_type_h (Ih_Object o) (Th_Object cn).
+        forall c o,
+        vhas_type_h (Ih_Object c o) (Th_Object c).
 
 
 
@@ -71,33 +71,20 @@ Inductive vhas_type : I_e -> T_e -> Prop :=
 
 
 
-Definition attr_key (cn a : string) : string :=
-  cn ++ "." ++ a.
-
-Definition role_key (cn r : string) : string :=
-  cn ++ "." ++ r.
-
-Definition nrole_key (cn nr : string) : string :=
-  cn ++ "." ++ nr.
-
-
-
-
-
 Definition context := partial_map T_h.
 
 
 
 
 
-Inductive has_type : context -> tm -> T_e -> Prop :=
+Inductive has_type : context -> object_model -> tm -> T_e -> Prop :=
 
     (* ======================== Var 表达式 ======================== *)
 
     | T_Var :
-        forall Gamma x th,
+        forall Gamma M x th,
             Gamma x = Some th ->
-            has_type Gamma (CVar x) (Te_Single th)
+            has_type Gamma M (CVar x) (Te_Single th)
 
 
 
@@ -105,64 +92,64 @@ Inductive has_type : context -> tm -> T_e -> Prop :=
     (*  无参operation： 字面量构造器  *)
 
     | T_Bool :
-        forall Gamma b,
-            has_type Gamma (CBool b) (Te_Single (Th_Basic Tb_Bool))
+        forall Gamma M b,
+            has_type Gamma M (CBool b) (Te_Single (Th_Basic Tb_Bool))
 
     | T_Int :
-        forall Gamma n,
-            has_type Gamma (CInt n) (Te_Single (Th_Basic Tb_Int))
+        forall Gamma M n,
+            has_type Gamma M (CInt n) (Te_Single (Th_Basic Tb_Int))
 
     | T_Real :
-        forall Gamma r,
-            has_type Gamma (CReal r) (Te_Single (Th_Basic Tb_Real))
+        forall Gamma M r,
+            has_type Gamma M (CReal r) (Te_Single (Th_Basic Tb_Real))
 
     | T_String :
-        forall Gamma s,
-            has_type Gamma (CString s) (Te_Single (Th_Basic Tb_String))
+        forall Gamma M s,
+            has_type Gamma M (CString s) (Te_Single (Th_Basic Tb_String))
 
 
 
 
     (*  basic type 有参operation： 一元操作  *)
     | T_BoolUn :
-        forall Gamma op t,
-            has_type Gamma t (Te_Single (Th_Basic Tb_Bool)) ->
-            has_type Gamma (CBoolUn op t) (Te_Single (Th_Basic Tb_Bool))
+        forall Gamma M op t,
+            has_type Gamma M t (Te_Single (Th_Basic Tb_Bool)) ->
+            has_type Gamma M (CBoolUn op t) (Te_Single (Th_Basic Tb_Bool))
 
 
 
     | T_ArithUn_Int :
-        forall Gamma op t,
+        forall Gamma M op t,
             (op = UNeg \/ op = UAbs) ->
-            has_type Gamma t (Te_Single (Th_Basic Tb_Int)) ->
-            has_type Gamma (CArithUn op t) (Te_Single (Th_Basic Tb_Int))
+            has_type Gamma M t (Te_Single (Th_Basic Tb_Int)) ->
+            has_type Gamma M (CArithUn op t) (Te_Single (Th_Basic Tb_Int))
 
 
     | T_ArithUn_Real :
-        forall Gamma op t,
+        forall Gamma M op t,
             (op = UNeg \/ op = UAbs) ->
-            has_type Gamma t (Te_Single (Th_Basic Tb_Real)) ->
-            has_type Gamma (CArithUn op t) (Te_Single (Th_Basic Tb_Real))
+            has_type Gamma M t (Te_Single (Th_Basic Tb_Real)) ->
+            has_type Gamma M (CArithUn op t) (Te_Single (Th_Basic Tb_Real))
 
 
     | T_ArithUn_ToInt :
-        forall Gamma op t,
+        forall Gamma M op t,
             (op = UFloor \/ op = URound) ->
-            has_type Gamma t (Te_Single (Th_Basic Tb_Real)) ->
-            has_type Gamma (CArithUn op t) (Te_Single (Th_Basic Tb_Int))
+            has_type Gamma M t (Te_Single (Th_Basic Tb_Real)) ->
+            has_type Gamma M (CArithUn op t) (Te_Single (Th_Basic Tb_Int))
 
 
     | T_StrUn :
-        forall Gamma op t,
-            has_type Gamma t (Te_Single (Th_Basic Tb_String)) ->
-            has_type Gamma (CStrUn op t) (Te_Single (Th_Basic Tb_String))
+        forall Gamma M op t,
+            has_type Gamma M t (Te_Single (Th_Basic Tb_String)) ->
+            has_type Gamma M (CStrUn op t) (Te_Single (Th_Basic Tb_String))
 
 
 
-    | T_ESubstring :
-        forall Gamma t i j,
-            has_type Gamma t (Te_Single (Th_Basic Tb_String)) ->
-            has_type Gamma (ESubstring t i j) (Te_Single (Th_Basic Tb_String)) 
+    | T_Substring :
+        forall Gamma M t i j,
+            has_type Gamma M t (Te_Single (Th_Basic Tb_String)) ->
+            has_type Gamma M (CSubstring t i j) (Te_Single (Th_Basic Tb_String)) 
 
 
 
@@ -172,64 +159,64 @@ Inductive has_type : context -> tm -> T_e -> Prop :=
     (*  basic type 有参operation： 二元操作  *)
 
     | T_BoolBin :
-        forall Gamma op t1 t2,
-            has_type Gamma t1 (Te_Single (Th_Basic Tb_Bool)) ->
-            has_type Gamma t2 (Te_Single (Th_Basic Tb_Bool)) ->
-            has_type Gamma (CBoolBin op t1 t2) (Te_Single (Th_Basic Tb_Bool))
+        forall Gamma M op t1 t2,
+            has_type Gamma M t1 (Te_Single (Th_Basic Tb_Bool)) ->
+            has_type Gamma M t2 (Te_Single (Th_Basic Tb_Bool)) ->
+            has_type Gamma M (CBoolBin op t1 t2) (Te_Single (Th_Basic Tb_Bool))
 
     (* 
     允许 Object = Object
     不在 typing 层区分可比性（可在语义层或额外约束）
     *)
     | T_CompBin :
-        forall Gamma op t1 t2 T,
-            has_type Gamma t1 (Te_Single th) ->
-            has_type Gamma t2 (Te_Single th) ->
-            has_type Gamma (CCompBin op t1 t2) (Te_Single (Th_Basic Tb_Bool))
+        forall Gamma M op t1 t2 th,
+            has_type Gamma M t1 (Te_Single th) ->
+            has_type Gamma M t2 (Te_Single th) ->
+            has_type Gamma M (CCompBin op t1 t2) (Te_Single (Th_Basic Tb_Bool))
 
 
     | T_ArithBin_Int :
-        forall Gamma op t1 t2,
+        forall Gamma M op t1 t2,
             (op = BAdd \/ op = BSub \/ op = BMul)  ->  (* 不是除法 *)
-            has_type Gamma t1 (Te_Single (Th_Basic Tb_Int)) ->
-            has_type Gamma t2 (Te_Single (Th_Basic Tb_Int)) ->
-            has_type Gamma (CArithBin op t1 t2) (Te_Single (Th_Basic Tb_Int))
+            has_type Gamma M t1 (Te_Single (Th_Basic Tb_Int)) ->
+            has_type Gamma M t2 (Te_Single (Th_Basic Tb_Int)) ->
+            has_type Gamma M (CArithBin op t1 t2) (Te_Single (Th_Basic Tb_Int))
 
 
     | T_ArithBin_IntDiv :
-        forall Gamma t1 t2,
-            has_type Gamma t1 (Te_Single (Th_Basic Tb_Int)) ->
-            has_type Gamma t2 (Te_Single (Th_Basic Tb_Int)) ->
-            has_type Gamma (CArithBin BDiv t1 t2) (Te_Single (Th_Basic Tb_Real))
+        forall Gamma M t1 t2,
+            has_type Gamma M t1 (Te_Single (Th_Basic Tb_Int)) ->
+            has_type Gamma M t2 (Te_Single (Th_Basic Tb_Int)) ->
+            has_type Gamma M (CArithBin BDiv t1 t2) (Te_Single (Th_Basic Tb_Real))
 
 
     | T_ArithBin_Real :
-        forall Gamma op t1 t2,
-            has_type Gamma t1 (Te_Single (Th_Basic Tb_Real)) ->
-            has_type Gamma t2 (Te_Single (Th_Basic Tb_Real)) ->
-            has_type Gamma (CArithBin op t1 t2) (Te_Single (Th_Basic Tb_Real))
+        forall Gamma M op t1 t2,
+            has_type Gamma M t1 (Te_Single (Th_Basic Tb_Real)) ->
+            has_type Gamma M t2 (Te_Single (Th_Basic Tb_Real)) ->
+            has_type Gamma M (CArithBin op t1 t2) (Te_Single (Th_Basic Tb_Real))
 
 
 
     | T_StrBin :
-        forall Gamma op t1 t2,
-            has_type Gamma t1 (Te_Single (Th_Basic Tb_String)) ->
-            has_type Gamma t2 (Te_Single (Th_Basic Tb_String)) ->
-            has_type Gamma (CStrBin op t1 t2) (Te_Single (Th_Basic Tb_String))
+        forall Gamma M op t1 t2,
+            has_type Gamma M t1 (Te_Single (Th_Basic Tb_String)) ->
+            has_type Gamma M t2 (Te_Single (Th_Basic Tb_String)) ->
+            has_type Gamma M (CStrBin op t1 t2) (Te_Single (Th_Basic Tb_String))
 
 
     | T_AggBin_Int :
-        forall Gamma op t1 t2,
-            has_type Gamma t1 (Te_Single (Th_Basic Tb_Int)) ->
-            has_type Gamma t2 (Te_Single (Th_Basic Tb_Int)) ->
-            has_type Gamma (CAggBin op t1 t2) (Te_Single (Th_Basic Tb_Int))
+        forall Gamma M op t1 t2,
+            has_type Gamma M t1 (Te_Single (Th_Basic Tb_Int)) ->
+            has_type Gamma M t2 (Te_Single (Th_Basic Tb_Int)) ->
+            has_type Gamma M (CAggBin op t1 t2) (Te_Single (Th_Basic Tb_Int))
 
 
     | T_AggBin_Real :
-        forall Gamma op t1 t2,
-            has_type Gamma t1 (Te_Single (Th_Basic Tb_Real)) ->
-            has_type Gamma t2 (Te_Single (Th_Basic Tb_Real)) ->
-            has_type Gamma (CAggBin op t1 t2) (Te_Single (Th_Basic Tb_Real))
+        forall Gamma M op t1 t2,
+            has_type Gamma M t1 (Te_Single (Th_Basic Tb_Real)) ->
+            has_type Gamma M t2 (Te_Single (Th_Basic Tb_Real)) ->
+            has_type Gamma M (CAggBin op t1 t2) (Te_Single (Th_Basic Tb_Real))
 
 
 
@@ -238,68 +225,68 @@ Inductive has_type : context -> tm -> T_e -> Prop :=
     (*  object type 有参operation： allInstances, 对象属性/角色  *)
 
     | T_AllInstances :
-        forall Gamma cn,
-        has_type Gamma (CAllInstances cn) (Te_Bag (Th_Object cn))
+        forall Gamma M cn,
+        has_type Gamma M (CAllInstances cn) (Te_Bag (Th_Object cn))
 
 
 
     | T_Attr :
-        forall Gamma t cn attr T,
-            has_type Gamma t (Te_Single (Th_Object c)) ->
-            Gamma (attr_key c attr) = Some T ->
-            has_type Gamma (CAttr t attr) (Te_Single (Th_Basic T))
+        forall Gamma M t c attr T,
+            has_type Gamma M t (Te_Single (Th_Object c)) ->
+            lookup_attr_type (ATT_c M) c attr = Some T ->
+            has_type Gamma M (CAttr t attr) (Te_Single (Th_Basic T))
 
 
     | T_Role :
-        forall Gamma t c1 r T,
-            has_type Gamma t (Te_Single (Th_Object c1)) ->
-            Gamma (role_key c1 r) = (Te_Single (Th_Object c2)) ->
-            has_type Gamma (CRole t r) (Te_Single (Th_Object c2))
+        forall Gamma M t c1 c2 role,
+            has_type Gamma M t (Te_Single (Th_Object c1)) ->
+            lookup_role_type (ASSOC M) (associates M) (roles M) c1 role = Some c2 ->
+            has_type Gamma M (CRole t role) (Te_Single (Th_Object c2))
 
 
 
     | T_NRole :
-        forall Gamma t cn r T,
-            has_type Gamma t (Ty_Object cn) ->
-            Gamma (nrole_key cn r) = Ty_Bag (Ty_Object T) ->
-            has_type Gamma (CNRole t r) (Ty_Bag (Ty_Object T))
+        forall Gamma M t c1 c2 nrole,
+            has_type Gamma M t (Te_Single (Th_Object c1)) ->
+            lookup_role_type (ASSOC M) (associates M) (roles M) c1 nrole = Some c2 ->
+            has_type Gamma M (CNRole t nrole) (Te_Single (Th_Object c2)) 
 
 
 
 
     (*  Bag type 有参operation： 字面量构造器 *)
     | T_BagLiteral :
-        forall Gamma ts T,
-            (forall t, In t ts -> has_type Gamma t T) ->
-            has_type Gamma (CBagLiteral ts) (Ty_Bag T)
+        forall Gamma M ts Tb,
+            (forall t, In t ts -> has_type Gamma M t (Te_Single (Th_Basic Tb))) ->
+            has_type Gamma M (CBagLiteral Tb ts) (Te_Bag (Th_Basic Tb))
 
 
 
 
     (*  Bag type 有参operation： Bag 集合运算  *)
     | T_Union :
-        forall Gamma t1 t2 T,
-            has_type Gamma t1 (Ty_Bag T) ->
-            has_type Gamma t2 (Ty_Bag T) ->
-            has_type Gamma (CUnion t1 t2) (Ty_Bag T)
+        forall Gamma M t1 t2 T,
+            has_type Gamma M t1 (Te_Bag T) ->
+            has_type Gamma M t2 (Te_Bag T) ->
+            has_type Gamma M (CUnion t1 t2) (Te_Bag T)
 
     | T_Intersect :
-        forall Gamma t1 t2 T,
-            has_type Gamma t1 (Ty_Bag T) ->
-            has_type Gamma t2 (Ty_Bag T) ->
-            has_type Gamma (CIntersect t1 t2) (Ty_Bag T)
+        forall Gamma M t1 t2 T,
+            has_type Gamma M t1 (Te_Bag T) ->
+            has_type Gamma M t2 (Te_Bag T) ->
+            has_type Gamma M (CIntersect t1 t2) (Te_Bag T)
 
     | T_Difference :
-        forall Gamma t1 t2 T,
-            has_type Gamma t1 (Ty_Bag T) ->
-            has_type Gamma t2 (Ty_Bag T) ->
-            has_type Gamma (CDifference t1 t2) (Ty_Bag T)
+        forall Gamma M t1 t2 T,
+            has_type Gamma M t1 (Te_Bag T) ->
+            has_type Gamma M t2 (Te_Bag T) ->
+            has_type Gamma M (CDifference t1 t2) (Te_Bag T)
 
     | T_SymDiff :
-        forall Gamma t1 t2 T,
-            has_type Gamma t1 (Ty_Bag T) ->
-            has_type Gamma t2 (Ty_Bag T) ->
-            has_type Gamma (CSymDiff t1 t2) (Ty_Bag T)
+        forall Gamma M t1 t2 T,
+            has_type Gamma M t1 (Te_Bag T) ->
+            has_type Gamma M t2 (Te_Bag T) ->
+            has_type Gamma M (CSymDiff t1 t2) (Te_Bag T)
 
 
 
@@ -317,62 +304,62 @@ Inductive has_type : context -> tm -> T_e -> Prop :=
 
 
     | T_IncludesAll :
-        forall Gamma t1 t2 T,
-            has_type Gamma t1 (Ty_Bag T) ->
-            has_type Gamma t2 (Ty_Bag T) ->
-            has_type Gamma (CIncludesAll t1 t2) Ty_Bool
+        forall Gamma M t1 t2 T,
+            has_type Gamma M t1 (Te_Bag T) ->
+            has_type Gamma M t2 (Te_Bag T) ->
+            has_type Gamma M (CIncludesAll t1 t2) (Te_Single (Th_Basic Tb_Bool))
     
     | T_ExcludesAll :
-        forall Gamma t1 t2 T,
-            has_type Gamma t1 (Ty_Bag T) ->
-            has_type Gamma t2 (Ty_Bag T) ->
-            has_type Gamma (CExcludesAll t1 t2) Ty_Bool
+        forall Gamma M t1 t2 T,
+            has_type Gamma M t1 (Te_Bag T) ->
+            has_type Gamma M t2 (Te_Bag T) ->
+            has_type Gamma M (CExcludesAll t1 t2) (Te_Single (Th_Basic Tb_Bool))
     
     | T_Includes :
-        forall Gamma t1 t2 T,
-            has_type Gamma t1 (Ty_Bag T) ->
-            has_type Gamma t2 T ->
-            has_type Gamma (CIncludes t1 t2) Ty_Bool
+        forall Gamma M t1 t2 T,
+            has_type Gamma M t1 (Te_Bag T) ->
+            has_type Gamma M t2 (Te_Single T) ->
+            has_type Gamma M (CIncludes t1 t2) (Te_Single (Th_Basic Tb_Bool))
 
     | T_Excludes :
-        forall Gamma t1 t2 T,
-            has_type Gamma t1 (Ty_Bag T) ->
-            has_type Gamma t2 T ->
-            has_type Gamma (CExcludes t1 t2) Ty_Bool
+        forall Gamma M t1 t2 T,
+            has_type Gamma M t1 (Te_Bag T) ->
+            has_type Gamma M t2 (Te_Single T) ->
+            has_type Gamma M (CExcludes t1 t2) (Te_Single (Th_Basic Tb_Bool))
 
 
     | T_IsEmpty :
-        forall Gamma t T,
-            has_type Gamma t (Ty_Bag T) ->
-            has_type Gamma (CIsEmpty t) Ty_Bool
+        forall Gamma M t T,
+            has_type Gamma M t (Te_Bag T) ->
+            has_type Gamma M (CIsEmpty t) (Te_Single (Th_Basic Tb_Bool))
 
     | T_NotEmpty :
-        forall Gamma t T,
-            has_type Gamma t (Ty_Bag T) ->
-            has_type Gamma (CNotEmpty t) Ty_Bool
+        forall Gamma M t T,
+            has_type Gamma M t (Te_Bag T) ->
+            has_type Gamma M (CNotEmpty t) (Te_Single (Th_Basic Tb_Bool))
 
     | T_IsUnique :
-        forall Gamma t T,
-            has_type Gamma t (Ty_Bag T) ->
-            has_type Gamma (CIsUnique t) Ty_Bool
+        forall Gamma M t T,
+            has_type Gamma M t (Te_Bag T) ->
+            has_type Gamma M (CIsUnique t) (Te_Single (Th_Basic Tb_Bool))
 
 
-    | T_EAggregate_Size :
-        forall Gamma t T,
-            has_type Gamma t (Ty_Bag T) ->
-            has_type Gamma (EAggregate AggSize t) Ty_Int
+    | T_CAggregate_Size :
+        forall Gamma M t T,
+            has_type Gamma M t (Te_Bag T) ->
+            has_type Gamma M (CAggregate AggSize t) (Te_Single (Th_Basic Tb_Int))
 
-    | T_EAggregate_Int :
-        forall Gamma op t,
+    | T_CAggregate_Int :
+        forall Gamma M op t,
             (op = AggMin \/ op = AggMax \/ op = AggSum) ->
-            has_type Gamma t (Ty_Bag Ty_Int) ->
-            has_type Gamma (EAggregate op t) Ty_Int
+            has_type Gamma M t (Te_Bag (Th_Basic Tb_Int)) ->
+            has_type Gamma M (CAggregate op t) (Te_Single (Th_Basic Tb_Int))
 
-    | T_EAggregate_Real :
-        forall Gamma op t,
+    | T_CAggregate_Real :
+        forall Gamma M op t,
             (op = AggMin \/ op = AggMax \/ op = AggSum) ->
-            has_type Gamma t (Ty_Bag Ty_Real) ->
-            has_type Gamma (EAggregate op t) Ty_Real
+            has_type Gamma M t (Te_Bag (Th_Basic Tb_Real)) ->
+            has_type Gamma M (CAggregate op t) (Te_Single (Th_Basic Tb_Real))
 
 
 
@@ -382,56 +369,55 @@ Inductive has_type : context -> tm -> T_e -> Prop :=
     (*  Bag type 有参operation：Iterator（绑定变量！）*)
 
     | T_ForAll :
-        forall Gamma t x T body,
-            has_type Gamma t (Ty_Bag T) ->
-            has_type (t_update Gamma x T) body Ty_Bool ->
-            has_type Gamma (CForAll t x body) Ty_Bool
+        forall Gamma M t x T body,
+            has_type Gamma M t (Te_Bag T) ->
+            has_type (update Gamma x T) M body (Te_Single (Th_Basic Tb_Bool)) ->
+            has_type Gamma M (CForAll t x body) (Te_Single (Th_Basic Tb_Bool))
 
     | T_Exists :
-        forall Gamma t x T body,
-            has_type Gamma t (Ty_Bag T) ->
-            has_type (t_update Gamma x T) body Ty_Bool ->
-            has_type Gamma (CExists t x body) Ty_Bool
+        forall Gamma M t x T body,
+            has_type Gamma M t (Te_Bag T) ->
+            has_type (update Gamma x T) M body (Te_Single (Th_Basic Tb_Bool)) ->
+            has_type Gamma M (CExists t x body) (Te_Single (Th_Basic Tb_Bool))
 
-    | T_One :
-        forall Gamma t x T body,
-            has_type Gamma t (Ty_Bag T) ->
-            has_type (t_update Gamma x T) body Ty_Bool ->
-            has_type Gamma (COne t x body) Ty_Bool
+    (* | T_One :
+        forall Gamma M t x T body,
+            has_type Gamma M t (Te_Bag T) ->
+            has_type (update Gamma x T) M body (Te_Single (Th_Basic Tb_Bool)) ->
+            has_type Gamma M (COne t x body) (Te_Single (Th_Basic Tb_Bool)) *)
 
 
     | T_Select :
-        forall Gamma t x T body,
-            has_type Gamma t (Ty_Bag T) ->
-            has_type (t_update Gamma x T) body Ty_Bool ->
-            has_type Gamma (CSelect t x body) (Ty_Bag T)
+        forall Gamma M t x T body,
+            has_type Gamma M t (Te_Bag T) ->
+            has_type (update Gamma x T) M body (Te_Single (Th_Basic Tb_Bool)) ->
+            has_type Gamma M (CSelect t x body) (Te_Bag T)
     
     | T_Reject :
-        forall Gamma t x T body,
-            has_type Gamma t (Ty_Bag T) ->
-            has_type (t_update Gamma x T) body Ty_Bool ->
-            has_type Gamma (CReject t x body) (Ty_Bag T)
+        forall Gamma M t x T body,
+            has_type Gamma M t (Te_Bag T) ->
+            has_type (update Gamma x T) M body (Te_Single (Th_Basic Tb_Bool)) ->
+            has_type Gamma M (CReject t x body) (Te_Bag T)
         
 
         
     | T_Collect :
-        forall Gamma t cn a T,
-            has_type Gamma t (Ty_Bag (Ty_Object cn)) ->
-            Gamma (attr_key cn a) = T ->
-            has_type Gamma (CCollect t a) (Ty_Bag T)
+        forall Gamma M t c attr T,
+            has_type Gamma M t (Te_Bag (Th_Object c)) ->
+            lookup_attr_type (ATT_c M) c attr = Some T ->
+            has_type Gamma M (CCollect t attr) (Te_Bag (Th_Basic T))
         
     | T_RCollect :
-        forall Gamma t cn r C,
-            has_type Gamma t (Ty_Bag (Ty_Object cn)) ->
-            Gamma (role_key cn r) = Ty_Object C ->
-            has_type Gamma (CRCollect t r) (Ty_Bag (Ty_Object C))
-    
-    | T_NRCollect :
-        forall Gamma t cn r C,
-            has_type Gamma t (Ty_Bag (Ty_Object cn)) ->
-            Gamma (nrole_key cn r) = Ty_Bag (Ty_Object C) ->
-            has_type Gamma (CNRCollect t r) (Ty_Bag (Ty_Object C))
+        forall Gamma M t c1 c2 role,
+            has_type Gamma M t (Te_Bag (Th_Object c1)) ->
+            lookup_role_type (ASSOC M) (associates M) (roles M) c1 role = Some c2 ->
+            has_type Gamma M (CRCollect t role) (Te_Bag (Th_Object c2))
 
+    | T_NRCollect :
+        forall Gamma M t c1 c2 nrole,
+            has_type Gamma M t (Te_Bag (Th_Object c1)) ->
+            lookup_role_type (ASSOC M) (associates M) (roles M) c1 nrole = Some c2 ->
+            has_type Gamma M (CNRCollect t nrole) (Te_Bag (Th_Object c2))
 
 
 
@@ -439,9 +425,9 @@ Inductive has_type : context -> tm -> T_e -> Prop :=
     (*  context *)
 
     | T_Context :
-        forall Gamma cn body,
-            has_type (t_update Gamma "self" (Ty_Object cn)) body Ty_Bool ->
-            has_type Gamma (CContext cn body) Ty_Bool
+        forall Gamma M cn body,
+            has_type (update Gamma "self" (Th_Object cn)) M body (Te_Single (Th_Basic Tb_Bool)) ->
+            has_type Gamma M (CContext cn body) (Te_Single (Th_Basic Tb_Bool))
 
 
 
