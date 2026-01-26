@@ -9,11 +9,15 @@ src/type/Typing.v
 src/equivalence/Models.v
 
 src/equivalence/OCLSyntax.v
-src/equivalence/OCLSemantic.v
+# src/equivalence/OCLSemantic.v
 
-src/equivalence/RASyntax.v
-src/equivalence/RASemantic.v
+# src/equivalence/RASyntax.v
+# src/equivalence/RASemantic.v
 
-src/equivalence/Translation.v
+# src/equivalence/Translation.v
 
 src/equivalence/Utils.v
+
+
+
+# src/eq_omg/OCLSyntax.v
