@@ -59,7 +59,7 @@ Inductive I_b : Type :=
 (* I_hat *)
 Inductive I_h : Type :=
   | Ih_Basic    : I_b -> I_h
-  | Ih_Object    : oid -> I_h.
+  | Ih_Object    : class_name -> oid -> I_h.
 
 (* I_expr *)
 Inductive I_e : Type :=
@@ -117,8 +117,131 @@ Record multi_pair : Type := {
 
 
 
+Definition disjoint_strings (xs ys : list string) : Prop :=
+  (forall n, In n xs -> ~ In n ys) /\
+  (forall n, In n ys -> ~ In n xs).
+  
 
-Record object_model_data : Type := {
+
+
+Fixpoint find_attr_type
+  (an : attr_name)
+  (attrs : list attr_sig)
+  : option T_b :=
+  match attrs with
+  | [] => None
+  | a :: tl =>
+      if String.eqb (att_name a) an
+      then Some (att_type a)
+      else find_attr_type an tl
+  end.
+
+
+
+(* 给定object_model_data，class_name，attr_name，查询attr_type *)
+Definition lookup_attr_type
+  (ATT_c : class_name -> option (list attr_sig))
+  (cn : class_name)
+  (an : attr_name)
+  : option T_b :=
+  match ATT_c cn with
+  | None => None
+  | Some attrs => find_attr_type an attrs
+  end.
+
+
+
+Definition lookup_role_type_in_assoc
+  (c : class_name)
+  (r : role_name)
+  (ap : assoc_pair)
+  (rp : role_pair)
+  : option class_name :=
+  if andb (String.eqb c (c1 ap)) (String.eqb r (r1 rp)) then
+    Some (c2 ap)
+  else if andb (String.eqb c (c2 ap)) (String.eqb r (r2 rp)) then
+    Some (c1 ap)
+  else
+    None.
+
+
+
+(* 给定object_model_data，class_name，role_name，查询role_type  *)
+Definition lookup_role_type
+  (ASSOC : list assoc_name)
+  (associates : assoc_name -> option assoc_pair)
+  (roles : assoc_name -> option role_pair)
+  (c : class_name)
+  (r : role_name)
+  : option class_name :=
+  let fix aux (assocs : list assoc_name) : option class_name :=
+      match assocs with
+      | [] => None
+      | asso :: tl =>
+          match associates asso, roles asso with
+          | Some ap, Some rp =>
+              match lookup_role_type_in_assoc c r ap rp with
+              | Some t => Some t
+              | None   => aux tl
+              end
+          | _, _ => aux tl
+          end
+      end
+  in aux (ASSOC).
+
+
+
+
+
+(* gives the set of all role names reachable (or navigable) from a class over a given association. *)
+Definition navends_ca
+  (associates : assoc_name -> option assoc_pair)
+  (roles : assoc_name -> option role_pair)
+  (c : class_name)
+  (asso : assoc_name) : option (list role_name) :=
+  match associates asso, roles asso with
+  | Some ap, Some rp =>
+      if String.string_dec (c1 ap) c then Some [r2 rp]
+      else if String.string_dec (c2 ap) c then Some [r1 rp]
+      else Some []
+  | _, _ => None
+  end.
+
+
+
+
+
+
+Definition option_list_to_list {A} (o : option (list A)) : list A :=
+  match o with
+  | Some xs => xs
+  | None => []
+  end.
+
+
+(* The set of role names that are reachable from a class along all associations the class participates in *)
+Definition navends_c
+  (ASSOC : list assoc_name)
+  (associates : assoc_name -> option assoc_pair)
+  (roles : assoc_name -> option role_pair)
+  (c : class_name) : list role_name :=
+  flat_map
+    (fun asso => option_list_to_list (navends_ca associates roles c asso))
+    ASSOC.
+
+
+Definition attr_names_of (ATT_c : class_name -> option (list attr_sig)) (c : class_name) : list string :=
+  match ATT_c c with
+  | Some attrs => map att_name attrs
+  | None => []
+  end.
+
+
+
+
+Record object_model : Type := {
+  (* data : object_model_data; *)
+
 
   (*  a set of classes  *)
   CLASS : list class_name;
@@ -139,111 +262,86 @@ Record object_model_data : Type := {
   multiplicities : assoc_name -> option multi_pair;
 
 
+  (* ===================== *)
+  (* well-formedness props *)
+  (* ===================== *)
+
+  wf_CLASS_nodup : NoDup (CLASS);
+  wf_ASSOC_nodup : NoDup (ASSOC);
+
+  wf_CLASS_ASSOC_disjoint :
+    disjoint_strings (CLASS) (ASSOC);
+
+  (* 属性表：c ∈ CLASS <-> ATT_c c = Some ... *)
+  wf_ATT_defined_iff :
+    forall c,
+      In c (CLASS) <-> exists attrs, (ATT_c) c = Some attrs;
+
+  (* associates：as ∈ ASSOC <-> associates as = Some ... *)
+  wf_assoc_defined_iff :
+  forall asso,
+    In asso (ASSOC) <-> exists ap, (associates) asso  = Some ap;
+
+  (* roles：as ∈ ASSOC <-> roles as = Some ... *)
+  wf_roles_defined_iff :
+    forall asso,
+      In asso (ASSOC) <-> exists rp, (roles) asso = Some rp;
+
+  (* multiplicities：as ∈ ASSOC <-> multiplicities as = Some ... *)
+  wf_mult_defined_iff :
+    forall asso,
+      In asso (ASSOC) <-> exists mp, (multiplicities) asso = Some mp;
+
+  (* --- 端点合法：association 的端点类必须属于 CLASS --- *)
+  wf_assoc_endpoints_in_CLASS :
+    forall asso ap,
+      (associates) asso = Some ap ->
+      In (c1 ap) (CLASS) /\ In (c2 ap) (CLASS);
+
+
+  (* --- 属性名唯一：同一类内属性名不重复 --- *)
+  wf_attr_names_nodup :
+    forall c attrs,
+      (ATT_c) c = Some attrs ->
+      NoDup (map att_name attrs);
+
+
+  (* --- 角色名唯一：同一类内角色名不重复 --- *)
+  wf_role_names_unique_per_class :
+  forall c, In c (CLASS) ->
+    NoDup (navends_c ASSOC associates roles c);
+
+  (* --- 属性名和角色名都唯一：同一类内属性名和角色名都不重复 --- *)
+  wf_attr_and_role_names_disjoint_per_class :
+    forall c, In c (CLASS) ->
+      disjoint_strings (attr_names_of ATT_c c) (navends_c ASSOC associates roles c);
+
+
 }.
 
 
 
-
-  (* gives the set of all role names reachable (or navigable) from a class over a given association. *)
-  Definition navends_ca (M : object_model_data) (c : class_name) (asso : assoc_name) : option (list role_name) :=
-    match associates M asso, roles M asso with
-    | Some ap, Some rp =>
-        if String.string_dec (c1 ap) c then Some [r2 rp]
-        else if String.string_dec (c2 ap) c then Some [r1 rp]
-        else Some []
-    | _, _ => None
-    end.
-
-
-  Definition option_list_to_list {A} (o : option (list A)) : list A :=
-    match o with
-    | Some xs => xs
-    | None => []
-    end.
-  
-
-  (* The set of role names that are reachable from a class along all associations the class participates in *)
-  Definition navends_c (M : object_model_data) (c : class_name) : list role_name :=
-    flat_map
-      (fun asso => option_list_to_list (navends_ca M c asso))
-      (ASSOC M).
-
-
-
-  Definition disjoint_strings (xs ys : list string) : Prop :=
-    (forall n, In n xs -> ~ In n ys) /\
-    (forall n, In n ys -> ~ In n xs).
-    
-  
-  Definition attr_names_of (M : object_model_data) (c : class_name) : list string :=
-    match ATT_c M c with
-    | Some attrs => map att_name attrs
-    | None => []
-    end.
-  
-
-  Record object_model : Type := {
-    data : object_model_data;
-  
-
-
-    (* ===================== *)
-    (* well-formedness props *)
-    (* ===================== *)
-
-    wf_CLASS_nodup : NoDup (CLASS data);
-    wf_ASSOC_nodup : NoDup (ASSOC data);
-
-    wf_CLASS_ASSOC_disjoint :
-      disjoint_strings (CLASS data) (ASSOC data);
-
-    (* 属性表：c ∈ CLASS <-> ATT_c c = Some ... *)
-    wf_ATT_defined_iff :
-      forall c,
-        In c (CLASS data) <-> exists attrs, (ATT_c data) c = Some attrs;
-
-    (* associates：as ∈ ASSOC <-> associates as = Some ... *)
-    wf_assoc_defined_iff :
-    forall asso,
-      In asso (ASSOC data) <-> exists ap, (associates data) asso  = Some ap;
-
-    (* roles：as ∈ ASSOC <-> roles as = Some ... *)
-    wf_roles_defined_iff :
-      forall asso,
-        In asso (ASSOC data) <-> exists rp, (roles data) asso = Some rp;
-
-    (* multiplicities：as ∈ ASSOC <-> multiplicities as = Some ... *)
-    wf_mult_defined_iff :
-      forall asso,
-        In asso (ASSOC data) <-> exists mp, (multiplicities data) asso = Some mp;
-
-    (* --- 端点合法：association 的端点类必须属于 CLASS --- *)
-    wf_assoc_endpoints_in_CLASS :
-      forall asso ap,
-        (associates data) asso = Some ap ->
-        In (c1 ap) (CLASS data) /\ In (c2 ap) (CLASS data);
-
-
-    (* --- 属性名唯一：同一类内属性名不重复 --- *)
-    wf_attr_names_nodup :
-      forall c attrs,
-        (ATT_c  data) c = Some attrs ->
-        NoDup (map att_name attrs);
-
-
-    (* --- 角色名唯一：同一类内角色名不重复 --- *)
-    wf_role_names_unique_per_class :
-    forall c, In c (CLASS data) ->
-      NoDup (navends_c data c);
-
-    (* --- 属性名和角色名都唯一：同一类内属性名和角色名都不重复 --- *)
-    wf_attr_and_role_names_disjoint_per_class :
-      forall c, In c (CLASS data) ->
-        disjoint_strings (attr_names_of data c) (navends_c data c);
-
-
-  }.
-
+(* 取出该导航的 multiplicity *)
+Definition lookup_nav_multiplicity
+  (M : object_model)
+  (c : class_name)
+  (role : role_name)
+  : option Multiplicity :=
+  let fix aux (assocs : list assoc_name) : option Multiplicity :=
+    match assocs with
+    | [] => None
+    | asso :: tl =>
+        match associates M asso, roles M asso, multiplicities M asso with
+        | Some ap, Some rp, Some mp =>
+            if andb (String.eqb (c1 ap) c) (String.eqb (r2 rp) role) then
+              Some (m2 mp) (* c1 端通过 r2 导航到 c2：看 m2 *)
+            else if andb (String.eqb (c2 ap) c) (String.eqb (r1 rp) role) then
+              Some (m1 mp) (* c2 端通过 r1 导航到 c1：看 m1 *)
+            else aux tl
+        | _, _, _ => aux tl
+        end
+    end
+  in aux (ASSOC M).
 
 
 
@@ -256,8 +354,7 @@ Record object_model_data : Type := {
 (*************************************************************)
 
 
-(* ========== oid-space：抽象化 oid(c) ========== *)
-Definition oid_of := class_name -> oid -> Prop.
+
 
 (* ========== multiplicity 语义（你目前只有 One/Many） ========== *)
 Definition sat_mult (m : Multiplicity) (k : nat) : Prop :=
@@ -286,7 +383,12 @@ Definition count_same_bar2 (links : list (oid * oid)) (l : oid * oid) : nat :=
 
 
 
-Record system_state_data : Type := {
+
+
+Record system_state (M : object_model) : Type := {
+
+
+
   (* σ_CLASS : CLASS -> finite set of oids *)
   sigma_CLASS : class_name -> option (list oid);
 
@@ -295,30 +397,22 @@ Record system_state_data : Type := {
 
   (* σ_ASSOC : ASSOC -> finite set of links (oid*oid) *)
   sigma_ASSOC : assoc_name -> option (list (oid * oid));
-}.
 
 
 
 
-Record system_state (M : object_model) (oidSpace : oid_of) : Type := {
-  st : system_state_data;
 
   (* i) σ_CLASS(c) 是有限集合，且 c ∈ CLASS <-> 有定义 *)
   wf_sigma_CLASS_defined_iff :
     forall c,
-      In c (CLASS (data M)) <-> exists os, (sigma_CLASS st) c = Some os;
+      In c (CLASS M) <-> exists os, sigma_CLASS c = Some os;
 
   wf_sigma_CLASS_nodup :
     forall c os,
-      sigma_CLASS st c = Some os ->
+      sigma_CLASS c = Some os ->
       NoDup os;
 
-  (* σ_CLASS(c) ⊂ oid(c) *)
-  wf_sigma_CLASS_subset_oid :
-    forall c os o,
-      sigma_CLASS st c = Some os ->
-      In o os ->
-      oidSpace c o;
+
 
 
 
@@ -327,45 +421,43 @@ Record system_state (M : object_model) (oidSpace : oid_of) : Type := {
 
   wf_sigma_ATT_defined_iff :
     forall c o a,
-      (sigma_ATT st) c o a <> None <->
+      sigma_ATT c o a <> None <->
       exists attrs,
-        (ATT_c (data M)) c = Some attrs /\
+        (ATT_c M) c = Some attrs /\
         In a (map att_name attrs) /\
         exists os,
-          (sigma_CLASS st) c = Some os /\
+          sigma_CLASS c = Some os /\
           In o os;
 
 
   (* iii-a) σ_ASSOC(as) 有定义 <-> asso ∈ ASSOC(M) *)
   wf_sigma_ASSOC_defined_iff :
     forall asso,
-      (sigma_ASSOC st) asso <> None <->
-      In asso (ASSOC (data M));
+      sigma_ASSOC asso <> None <->
+      In asso (ASSOC M);
 
 
   wf_sigma_ASSOC_nodup :
     forall asso ls,
-      sigma_ASSOC st asso = Some ls ->
+      sigma_ASSOC asso = Some ls ->
       NoDup ls;
 
   (* 
   associates asso = Some ap 给出端点类 c1 ap, c2 ap
   l = (o1,o2) ∈ σ_ASSOC(asso) 要求：
   o1 ∈ σ_CLASS(c1 ap) 且 o2 ∈ σ_CLASS(c2 ap)
-  同时 oidSpace (c1 ap) o1、oidSpace (c2 ap) o2（可选，但建议保留）
   *)
 
   wf_links_endpoints_welltyped :
     forall asso ap ls l o1 o2,
-      (associates (data M)) asso = Some ap ->
-      sigma_ASSOC st asso = Some ls ->
+      (associates M) asso = Some ap ->
+      sigma_ASSOC asso = Some ls ->
       In l ls ->
       l = (o1, o2) ->
       exists os1 os2,
-        sigma_CLASS st (c1 ap) = Some os1 /\
-        sigma_CLASS st (c2 ap) = Some os2 /\
-        In o1 os1 /\ In o2 os2 /\
-        oidSpace (c1 ap) o1 /\ oidSpace (c2 ap) o2;
+        sigma_CLASS (c1 ap) = Some os1 /\
+        sigma_CLASS (c2 ap) = Some os2 /\
+        In o1 os1 /\ In o2 os2;
 
   (* 
   规范的式子（对二元关联）可以解释为：
@@ -375,8 +467,8 @@ Record system_state (M : object_model) (oidSpace : oid_of) : Type := {
   *)
   wf_multiplicity_constraints :
     forall asso mp ls l,
-      (multiplicities (data M)) asso = Some mp ->
-      sigma_ASSOC st asso = Some ls ->
+      (multiplicities M) asso = Some mp ->
+      sigma_ASSOC asso = Some ls ->
       In l ls ->
       sat_mult (m1 mp) (count_same_bar1 ls l) /\
       sat_mult (m2 mp) (count_same_bar2 ls l);
@@ -389,6 +481,40 @@ Record system_state (M : object_model) (oidSpace : oid_of) : Type := {
 
 
 
+Definition navigate_role
+  (M  : object_model)
+  (SS : system_state M)
+  (C  : class_name)
+  (o  : oid)
+  (role : role_name)
+  : option (class_name * list oid) :=
+
+  let fix aux (assocs : list assoc_name)
+      : option (class_name * list oid) :=
+    match assocs with
+    | [] => None
+    | asso :: tl =>
+        match associates M asso, roles M asso, sigma_ASSOC M SS asso with
+        | Some ap, Some rp, Some ls =>
+
+            (* 情况 1：C 是 c1，role 应该等于 r2，目标在 snd *)
+            if andb (String.eqb (c1 ap) C) (String.eqb (r2 rp) role) then
+              let targets :=
+                map snd (filter (fun l => String.eqb (fst l) o) ls) in
+              Some (c2 ap, targets)
+
+            (* 情况 2：C 是 c2，role 应该等于 r1，目标在 fst *)
+            else if andb (String.eqb (c2 ap) C) (String.eqb (r1 rp) role) then
+              let targets :=
+                map fst (filter (fun l => String.eqb (snd l) o) ls) in
+              Some (c1 ap, targets)
+
+            else aux tl
+
+        | _, _, _ => aux tl
+        end
+    end
+  in aux (ASSOC M).
 
 
 
@@ -412,19 +538,19 @@ Inductive I_ra : Type :=
   | Ira_Int : Z -> I_ra
   | Ira_Real : R -> I_ra
   | Ira_String : string -> I_ra
-  | Ira_Object : oid -> I_ra. 
+  | Ira_Object : class_name -> oid -> I_ra. 
 
 
 
 
 (* 值与类型匹配 *)
-Definition I_ra_has_type (oidSpace : oid_of) (v : I_ra) (t : T_ra) : Prop :=
+Definition I_ra_has_type (v : I_ra) (t : T_ra) : Prop :=
   match v, t with
   | Ira_Bool _,   Tra_Bool        => True
   | Ira_Int _,    Tra_Int         => True
   | Ira_Real _,   Tra_Real        => True
   | Ira_String _, Tra_String      => True
-  | Ira_Object o, Tra_Object C    => oidSpace C o
+  | Ira_Object c1 o, Tra_Object c2    => String.eqb c1 c2 = true
   | _, _ => False
   end.
 
@@ -518,7 +644,7 @@ Definition row_domain (r : RowData) : list string :=
 
 
 (* Row 严格良构：域=列集合 + 行内无重复 + 类型匹配 *)
-Definition wf_Row_strict (oidSpace : oid_of) (ts : TableSchema) (r : RowData) : Prop :=
+Definition wf_Row_strict (ts : TableSchema) (r : RowData) : Prop :=
   NoDup (row_domain r) /\
   (forall cn,
       In cn (row_domain r) <->
@@ -526,17 +652,17 @@ Definition wf_Row_strict (oidSpace : oid_of) (ts : TableSchema) (r : RowData) : 
   (forall col v,
       In col (table_cols ts) ->
       lookup_row (col_name col) r = Some v ->
-      I_ra_has_type oidSpace v (col_ty col)).
+      I_ra_has_type v (col_ty col)).
 
-Definition wf_TableInst (oidSpace : oid_of) (ts : TableSchema) (rows : list RowData) : Prop :=
-  Forall (wf_Row_strict oidSpace ts) rows.
+Definition wf_TableInst (ts : TableSchema) (rows : list RowData) : Prop :=
+  Forall (wf_Row_strict ts) rows.
 
 
 
 
 
 (* DBInstance 总 wf：域受 Schema 限制 + 每张表实例良构 *)
-Definition wf_DBInstance (oidSpace : oid_of) (sc : Schema_data) (db : DBInstance_data) : Prop :=
+Definition wf_DBInstance (sc : Schema_data) (db : DBInstance_data) : Prop :=
   let tbl := db_tables db in
   (* 表有定义 -> schema 里确实存在该表 *)
   (forall tname rows,
@@ -547,15 +673,15 @@ Definition wf_DBInstance (oidSpace : oid_of) (sc : Schema_data) (db : DBInstance
   (forall tname ts rows,
       lookup_table sc tname = Some ts ->
       tbl tname = Some rows ->
-      wf_TableInst oidSpace ts rows).
+      wf_TableInst ts rows).
 
 
 
 
 
-Record DBInstance (oidSpace : oid_of) (SC : Schema) : Type := {
+Record DBInstance (SC : Schema) : Type := {
   db_data : DBInstance_data;
-  db_wf   : wf_DBInstance oidSpace (sc_data SC) db_data
+  db_wf   : wf_DBInstance (sc_data SC) db_data
 }.
 
 
@@ -620,7 +746,7 @@ Definition ClassTable_ok (M : object_model) (c : class_name) (ts : TableSchema) 
     col_ty col_oid = Tra_Object c /\
   (* 属性列 *)
   (forall attrs a,
-      ATT_c (data M) c = Some attrs ->
+      ATT_c M c = Some attrs ->
       In a attrs ->
       exists col_a,
         lookup_col (att_name a) (table_cols ts) = Some col_a /\
@@ -633,7 +759,7 @@ Definition ClassTable_no_extra_cols (M : object_model) (c : class_name) (ts : Ta
     lookup_col cn (table_cols ts) = Some col ->
     cn = oid_col \/
     exists attrs a,
-      ATT_c (data M) c = Some attrs /\
+      ATT_c M c = Some attrs /\
       In a attrs /\
       cn = att_name a.
 
@@ -648,8 +774,8 @@ Definition ClassTable_no_extra_cols (M : object_model) (c : class_name) (ts : Ta
 Definition AssocTable_ok (M : object_model) (asso : assoc_name) (ts : TableSchema) : Prop :=
   table_name ts = asso /\
   exists ap rp,
-    associates (data M) asso = Some ap /\
-    roles (data M) asso = Some rp /\
+    associates M asso = Some ap /\
+    roles M asso = Some rp /\
     (* role r1 列 *)
     exists col1,
       lookup_col (r1 rp) (table_cols ts) = Some col1 /\
@@ -664,8 +790,8 @@ Definition AssocTable_no_extra_cols (M : object_model) (asso : assoc_name) (ts :
   forall cn col,
     lookup_col cn (table_cols ts) = Some col ->
     exists ap rp,
-      associates (data M) asso = Some ap /\
-      roles (data M) asso = Some rp /\
+      associates M asso = Some ap /\
+      roles M asso = Some rp /\
       (cn = r1 rp \/ cn = r2 rp).
 
     
@@ -679,14 +805,14 @@ Definition AssocTable_no_extra_cols (M : object_model) (asso : assoc_name) (ts :
 Definition EncSchema (M : object_model) (sc : Schema_data) : Prop :=
   (* 每个类都有对应表 *)
   (forall c,
-      In c (CLASS (data M)) ->
+      In c (CLASS M) ->
       exists ts,
         lookup_tableS sc c = Some ts /\
         ClassTable_ok M c ts)
   /\
   (* 每个关联都有对应表 *)
   (forall asso,
-      In asso (ASSOC (data M)) ->
+      In asso (ASSOC M) ->
       exists ts,
         lookup_tableS sc asso = Some ts /\
         AssocTable_ok M asso ts)
@@ -694,7 +820,7 @@ Definition EncSchema (M : object_model) (sc : Schema_data) : Prop :=
   (* 可选：schema 不包含额外表 *)
   (forall tname ts,
       lookup_tableS sc tname = Some ts ->
-      In tname (CLASS (data M)) \/ In tname (ASSOC (data M))).
+      In tname (CLASS M) \/ In tname (ASSOC M)).
 
 
 
@@ -715,14 +841,14 @@ Definition AssocTable_ok_strong (M : object_model) (asso : assoc_name) (ts : Tab
 Definition EncSchema_strong (M : object_model) (sc : Schema_data) : Prop :=
   (* 每个类都有对应表（且列不多不少） *)
   (forall c,
-      In c (CLASS (data M)) ->
+      In c (CLASS M) ->
       exists ts,
         lookup_tableS sc c = Some ts /\
         ClassTable_ok_strong M c ts)
   /\
   (* 每个关联都有对应表（且列不多不少） *)
   (forall asso,
-      In asso (ASSOC (data M)) ->
+      In asso (ASSOC M) ->
       exists ts,
         lookup_tableS sc asso = Some ts /\
         AssocTable_ok_strong M asso ts)
@@ -730,7 +856,7 @@ Definition EncSchema_strong (M : object_model) (sc : Schema_data) : Prop :=
   (* schema 不包含额外表 *)
   (forall tname ts,
       lookup_tableS sc tname = Some ts ->
-      In tname (CLASS (data M)) \/ In tname (ASSOC (data M))).
+      In tname (CLASS M) \/ In tname (ASSOC M)).
 
 
 
@@ -760,22 +886,28 @@ Definition enc_Ib (v : I_b) : I_ra :=
 
 
 
-
+(* 
+一个对象 o ∈ σ_CLASS(c)
+对应 类表 c 中的一行 r，满足：
+oid 列存在，且值为 o
+对每个属性 a：若 σ_ATT(c,o,a)=Some v，则行中有 (a, enc_Ib v)
+若未定义，则行中没有该列
+*)
 Definition ClassObjectRow_ok
   (M : object_model)
-  (S : system_state_data)
+  (SS : system_state M)
   (c : class_name)
   (o : oid)
   (r : RowData) : Prop :=
 
   (* oid 列 *)
-  lookup_row oid_col r = Some (Ira_Object o)
+  lookup_row oid_col r = Some (Ira_Object c o)
   /\
   (* 属性列 *)
   (forall attrs a v,
-      ATT_c (data M) c = Some attrs ->
+      ATT_c M c = Some attrs ->
       In a attrs ->
-      sigma_ATT S c o (att_name a) = Some v ->
+      sigma_ATT M SS c o (att_name a) = Some v ->
       lookup_row (att_name a) r = Some (enc_Ib v))
   /\
   (* 不出现“幽灵属性列” *)
@@ -783,57 +915,73 @@ Definition ClassObjectRow_ok
       lookup_row cn r = Some v ->
       cn = oid_col \/
       exists attrs a,
-        ATT_c (data M) c = Some attrs /\
+        ATT_c M c = Some attrs /\
         In a attrs /\
         cn = att_name a).
 
 
 
-
+(* 
+类 c 的整张表实例，与 σ_CLASS(c) 对应：
+每个对象都对应一行
+每行都来自某个对象
+行内容满足 ClassObjectRow_ok
+*)
 Definition ClassTableInst_ok
   (M : object_model)
-  (S : system_state_data)
+  (SS : system_state M)
   (c : class_name)
   (rows : list RowData) : Prop :=
 
   (* 覆盖性：每个对象都有一行 *)
   (forall o os,
-      sigma_CLASS S c = Some os ->
+      sigma_CLASS M SS c = Some os ->
       In o os ->
-      exists r, In r rows /\ ClassObjectRow_ok M S c o r)
+      exists r, In r rows /\ ClassObjectRow_ok M SS c o r)
   /\
   (* 反向性：每行来自某个对象 *)
   (forall r,
       In r rows ->
       exists o os,
-        sigma_CLASS S c = Some os /\
+        sigma_CLASS M SS c = Some os /\
         In o os /\
-        ClassObjectRow_ok M S c o r).
+        ClassObjectRow_ok M SS c o r).
       
 
 
+(* 
+一个链接 l = (o1,o2)
+对应 关联表中的一行，满足：
+r1 = o1
+r2 = o2
+*)
 Definition AssocLinkRow_ok
   (M : object_model)
   (asso : assoc_name)
   (l : oid * oid)
   (r : RowData) : Prop :=
 
-  exists rp,
-    roles (data M) asso = Some rp /\
-    lookup_row (r1 rp) r = Some (Ira_Object (fst l)) /\
-    lookup_row (r2 rp) r = Some (Ira_Object (snd l)).
+  exists ap rp c1 c2,
+    associates M asso = Some ap /\
+    roles M asso = Some rp /\
+    lookup_row (r1 rp) r = Some (Ira_Object (c1 ap) (fst l)) /\
+    lookup_row (r2 rp) r = Some (Ira_Object (c2 ap) (snd l)).
 
 
 
+
+(* 
+关联表 ↔ σ_ASSOC(asso) 的对应关系
+*)
 Definition AssocTableInst_ok
   (M : object_model)
-  (S : system_state_data)
+  (SS : system_state M)
   (asso : assoc_name)
   (rows : list RowData) : Prop :=
 
   (* 覆盖性 *)
   (forall l ls,
-      sigma_ASSOC S asso = Some ls ->
+      sigma_ASSOC M SS asso = Some ls ->
       In l ls ->
       exists r, In r rows /\ AssocLinkRow_ok M asso l r)
   /\
@@ -841,40 +989,39 @@ Definition AssocTableInst_ok
   (forall r,
       In r rows ->
       exists l ls,
-        sigma_ASSOC S asso = Some ls /\
+        sigma_ASSOC M SS asso = Some ls /\
         In l ls /\
         AssocLinkRow_ok M asso l r).
 
 
 
-
+(* 总体：SystemState ↔ DBInstance 对应关系 *)
 Definition EncDB
   (M : object_model)
-  (S : system_state_data)
+  (SS : system_state M)
   (sc : Schema_data)
   (db : DBInstance_data) : Prop :=
 
   (* 类表一致 *)
   (forall c ts rows,
-      In c (CLASS (data M)) ->
+      In c (CLASS M) ->
       lookup_table sc c = Some ts ->
       db_tables db c = Some rows ->
-      ClassTableInst_ok M S c rows)
+      ClassTableInst_ok M SS c rows)
   /\
   (* 关联表一致 *)
   (forall asso ts rows,
-      In asso (ASSOC (data M)) ->
+      In asso (ASSOC M) ->
       lookup_table sc asso = Some ts ->
       db_tables db asso = Some rows ->
-      AssocTableInst_ok M S asso rows).
+      AssocTableInst_ok M SS asso rows).
 
 
 
 Definition EncDBW
   (M : object_model)
-  (oidSpace : oid_of)
-  (SS : system_state M oidSpace)
+  (SS : system_state M)
   (SC : Schema)
-  (DB : DBInstance oidSpace SC) : Prop :=
-  EncDB M (st M oidSpace SS) (sc_data SC) ( db_data oidSpace SC DB).
+  (DB : DBInstance SC) : Prop :=
+  EncDB M SS (sc_data SC) ( db_data SC DB).
 
