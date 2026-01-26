@@ -22,7 +22,7 @@ Inductive arith_unop : Type :=
 | UNeg (* -x *) | UAbs | UFloor | URound.
 
 Inductive str_unop : Type :=
-| UToUpper | UToLower.
+| UToUpper | UToLower | USize.
 
 
 
@@ -46,7 +46,7 @@ Inductive agg_binop : Type :=
 (* bag聚合函数 *)
 Inductive aggop : Type  :=
 | AggSize | AggSum 
-(* | AggMin | AggMax  *)
+| AggMin | AggMax 
 .
 
 
@@ -97,44 +97,44 @@ Inductive tm : Type :=
 
 
     (*  Bag type 有参operation： 字面量构造器 *)
-    | CBagLiteral : T_h -> list tm -> tm
+    | CBagLiteral : T_b -> list tm -> tm
 
 
     (*  Bag type 有参operation： Bag 集合运算  *)
     | CUnion        : tm -> tm -> tm
-    | CIntersect    : tm -> tm -> tm
+    (* | CIntersect    : tm -> tm -> tm *)
     | CDifference   : tm -> tm -> tm
-    | CSymDiff      : tm -> tm -> tm
+    (* | CSymDiff      : tm -> tm -> tm *)
 
 
 
 
 
-    (*  Bag type 有参operation： Bag 函数  *)
-    | CIncludesAll  : tm -> tm -> tm
-    | CExcludesAll  : tm -> tm -> tm
-    | CIncludes     : tm -> tm -> tm
-    | CExcludes     : tm -> tm -> tm
-    | CIsEmpty      : tm -> tm
-    | CNotEmpty     : tm -> tm
-    | CIsUnique     : tm -> tm
-    | EAggregate : aggop -> tm -> tm
+    (*  Bag type 有参operation： Bag 函数 。 可用select+size表示*)
+    (* | CIncludesAll  : tm -> tm -> tm *)
+    (* | CExcludesAll  : tm -> tm -> tm *)
+    (* | CIncludes     : tm -> tm -> tm *)
+    (* | CExcludes     : tm -> tm -> tm *)
+    (* | CIsEmpty      : tm -> tm *)
+    (* | CNotEmpty     : tm -> tm *)
+    (* | CIsUnique     : tm -> tm *)
+    | CAggregate : aggop -> tm -> tm
 
 
     (* ======================== iterator 表达式 ======================== *)
  
-    (*  Bag type 有参operation：Iterator（绑定变量！）*)
-    | CForAll   : tm -> var_name -> tm -> tm
-    | CExists   : tm -> var_name -> tm -> tm
-    | COne      : tm -> var_name -> tm -> tm
+    (*  Bag type 有参operation：Iterator。 可用select+size表示*)
+    (* | CForAll   : tm -> var_name -> tm -> tm *)
+    (* | CExists   : tm -> var_name -> tm -> tm *)
+    (* | COne      : tm -> var_name -> tm -> tm *)
     | CSelect   : tm -> var_name -> tm -> tm
-    | CReject   : tm -> var_name -> tm -> tm
+    (* | CReject   : tm -> var_name -> tm -> tm *)
     | CCollect  : tm -> attr_name -> tm
     | CRCollect  : tm -> role_name -> tm
     | CNRCollect : tm -> role_name -> tm
 
 
     (*  context *)
-    | CContext : class_name -> tm -> tm
+    (* | CContext : class_name -> tm -> tm *)
 
 .
