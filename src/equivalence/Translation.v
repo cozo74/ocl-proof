@@ -210,23 +210,9 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
     (* 
         转换规则:
         - 若t1为rex，t2为rex
-            - 转换为Rex的二元操作
-            - 一个标量不存在依赖变量，依赖变量列表为空
-            - 类型由OCLTyping中binop_type函数计算得到
         - 若t1为rex，t2为rel
         - 若t1为rel，t2为rex
-            - 转换为Rel上的Project操作
-                - 保留所有列
-                - 将val_col列根据binop变换为新列
-            - 依赖变量列表与源rel一致
-            - 类型由OCLTyping中binop_type函数计算得到
         - 若t1为rel，t2为rel
-            - 准换为两个rel的join+project操作
-                - join条件为：所有相同依赖变量相等
-                - 对join结果进行投影，投影出两个依赖变量列表的并集（去重），
-                    将val_col列根据binop变换为新列
-            - 依赖变量列表为两个依赖变量列表的并集（去重）
-            - 类型由OCLTyping中binop_type函数计算得到
     *)
 
     | CBinop op t1 t2 =>
@@ -284,14 +270,14 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
         (* rel 与 rel
             转换规则:
-                - 若t1为rel，t2为rel
-                    - 转换为两个rel的rename+(join+project/cartesian+project)
-                    - 准换为两个rel的join+project操作
-                        - join条件为：所有相同依赖变量相等
-                        - 对join结果进行投影，投影出两个依赖变量列表的并集（去重），
-                            将val_col列根据binop变换为新列
-                    - 依赖变量列表为两个依赖变量列表的并集（去重）
-                    - 类型由OCLTyping中binop_type函数计算得到
+            - 若t1为rel，t2为rel
+                - 转换为两个rel的rename+(join+project/cartesian+project)
+                - 准换为两个rel的join+project操作
+                    - join条件为：所有相同依赖变量相等
+                    - 对join结果进行投影，投影出两个依赖变量列表的并集（去重），
+                        将val_col列根据binop变换为新列
+                - 依赖变量列表为两个依赖变量列表的并集（去重）
+                - 类型由OCLTyping中binop_type函数计算得到
         *)
         (* join时将右表相同列重命名为带_r后缀 *)
         | Some (Rel q1, vl1, te1), Some (Rel q2, vl2, te2) =>
@@ -336,12 +322,20 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
 
     (*  object type 有参operation： allInstances, 对象属性/角色  *)
-    (* | CAllInstances class =>
-        match lookup_table (sc_data M) class with
+    (* 
+        转换规则:
+        - 转换为 表扫描+project oid列为val_col
+    *)
+    | CAllInstances class =>
+        match lookup_class (CLASS M) class with
         | Some table =>
-            Some ( Rel ( RAProject [(mkProj val_col (RCol oid_col))] (RATable class)))
+            Some (
+                Rel ( RAProject [(mkProj val_col (RCol oid_col))] (RATable class)),
+                [],
+                Te_Single (Th_Object class)
+                )
         | None => None
-        end *)
+        end
 
 
 
@@ -596,66 +590,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
 
       
-    (*  一元布尔操作  *)
-    (* 操作逻辑为，找出varEnv顶端的var对应的全集，用全集和当前tm对应的ra_rel进行差集操作，groupkey为空 *)
-    (* | CBoolUn op tm =>
-        match op with
-        | UNot =>
-            (* 先翻译子表达式 *)
-            match translate_rel M Gamma tm with
-            | None => None
-            | Some (qTrue, _) =>
-                (* 取当前上下文的全集（varEnv 栈顶） *)
-                match Gamma with
-                | [] => None
-                | (_, (qAll, _)) :: _ =>
-                    (* 差集：全集 - 满足 tm 的集合 *)
-                    Some
-                    ( RADiff qAll qTrue
-                    , []   (* 布尔结果不携带 groupkey *)
-                    )
-                end
-            end
-        end *)
 
-
-
-    (*  二元布尔操作  *)
-    (* | CBoolBin op t1 t2 =>
-        match translate_rel M Gamma t1,
-            translate_rel M Gamma t2 with
-        | Some (q1, _), Some (q2, _) =>
-            match op with
-            | BAnd =>
-                (* a and b  ≡  a ∩ b *)
-                Some ( RAIntersect q1 q2
-                    , [] )
-
-            | BOr  =>
-                (* a or b   ≡  a ∪ b *)
-                Some ( RAUnion q1 q2
-                    , [] )
-
-            | BXor =>
-                (* a xor b = (a − b) ∪ (b − a) *)
-                let qAminusB := RADiff q1 q2 in
-                let qBminusA := RADiff q2 q1 in
-                Some ( RAUnion qAminusB qBminusA
-                        , [] )
-
-            | BImplies =>
-                (* a implies b  ≡  (not a) or b *)
-                (*             ≡  (All − a) ∪ b *)
-                match Gamma with
-                | [] => None
-                | (_, (qAll, _)) :: _ =>
-                    let qNotA := RADiff qAll q1 in
-                    Some ( RAUnion qNotA q2
-                        , [] )
-                end
-            end
-        | _, _ => None
-        end *)
 
 
 
