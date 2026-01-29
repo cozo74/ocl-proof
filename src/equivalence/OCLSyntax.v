@@ -11,7 +11,11 @@ From OCL.equivalence Require Import Models.
 Definition var_name := string.
 
 
-(* ================================= Term ======================================= *)
+
+(* =====================   unary, binary operatior  ======================= *)
+
+
+
 
 
 (* 一元运算 *)
@@ -25,8 +29,12 @@ Inductive str_unop : Type :=
 | UToUpper | UToLower | USize.
 
 
+Inductive unop : Type :=
+    | U_Bool  : bool_unop  -> unop
+    | U_Arith : arith_unop -> unop
+    | U_Str   : str_unop   -> unop.
 
-
+    
 (* 二元运算 *)
 Inductive bool_binop : Type :=
 | BAnd | BOr | BXor | BImplies.
@@ -51,40 +59,35 @@ Inductive aggop : Type  :=
 
 
 
+Inductive binop : Type :=
+    | B_Bool  : bool_binop  -> binop
+    | B_Comp  : comp_binop  -> binop
+    | B_Arith : arith_binop -> binop
+    | B_Str   : str_binop   -> binop
+    | B_Agg   : agg_binop   -> binop.
+
+
+(* ================================= Term ======================================= *)
+
+
+
+
 
 (* OCL 表达式（统一 AST） *)
 Inductive tm : Type :=
 
-
-
     (* ======================== Var 表达式 ======================== *)
     | CVar    : var_name -> tm
 
-
-
     (* ======================== operation 表达式 ======================== *)
     (*  无参operation： 字面量构造器  *)
-    | CBool   : bool -> tm
-    | CInt    : Z -> tm
-    | CReal   : R -> tm
-    | CString : string -> tm
-
+    | CLit    : I_b -> tm
 
     (*  basic type 有参operation： 一元操作  *)
-    | CBoolUn    : bool_unop -> tm -> tm
-    | CArithUn   : arith_unop -> tm -> tm
-    | CStrUn     : str_unop -> tm -> tm
-    | CSubstring : tm -> Z -> Z -> tm 
+    | CUnop     : unop -> tm -> tm
 
-
-    (*  basic type 有参operation： 二元操作  *)
-    | CBoolBin    : bool_binop -> tm -> tm -> tm
-    | CCompBin    : comp_binop -> tm -> tm -> tm
-    | CArithBin    : arith_binop -> tm -> tm -> tm
-    | CStrBin    : str_binop -> tm -> tm -> tm
-    | CAggBin    : agg_binop -> tm -> tm -> tm
-
-
+    (*  basic type 有参operation： 二元操作 (和object type eq)  *)
+    | CBinop    : binop -> tm -> tm -> tm
 
     (*  object type 有参operation： allInstances, 对象属性/角色  *)
     | CAllInstances : class_name -> tm
@@ -92,49 +95,21 @@ Inductive tm : Type :=
     | CRole   : tm -> role_name -> tm
     | CNRole   : tm -> role_name -> tm
 
-
-
-
-
     (*  Bag type 有参operation： 字面量构造器 *)
     | CBagLiteral : T_b -> list tm -> tm
 
-
     (*  Bag type 有参operation： Bag 集合运算  *)
     | CUnion        : tm -> tm -> tm
-    (* | CIntersect    : tm -> tm -> tm *)
     | CDifference   : tm -> tm -> tm
-    (* | CSymDiff      : tm -> tm -> tm *)
-
-
-
 
 
     (*  Bag type 有参operation： Bag 函数 。 可用select+size表示*)
-    (* | CIncludesAll  : tm -> tm -> tm *)
-    (* | CExcludesAll  : tm -> tm -> tm *)
-    (* | CIncludes     : tm -> tm -> tm *)
-    (* | CExcludes     : tm -> tm -> tm *)
-    (* | CIsEmpty      : tm -> tm *)
-    (* | CNotEmpty     : tm -> tm *)
-    (* | CIsUnique     : tm -> tm *)
     | CAggregate : aggop -> tm -> tm
-
 
     (* ======================== iterator 表达式 ======================== *)
  
     (*  Bag type 有参operation：Iterator。 可用select+size表示*)
-    (* | CForAll   : tm -> var_name -> tm -> tm *)
-    (* | CExists   : tm -> var_name -> tm -> tm *)
-    (* | COne      : tm -> var_name -> tm -> tm *)
     | CSelect   : tm -> var_name -> tm -> tm
-    (* | CReject   : tm -> var_name -> tm -> tm *)
-    | CCollect  : tm -> attr_name -> tm
-    | CRCollect  : tm -> role_name -> tm
-    | CNRCollect : tm -> role_name -> tm
 
-
-    (*  context *)
-    (* | CContext : class_name -> tm -> tm *)
 
 .

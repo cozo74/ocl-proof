@@ -10,18 +10,210 @@
 (*                                                           *)
 (*************************************************************)
 
-From Stdlib Require Import
-  String
-  List
-  Bool
-  ZArith
-  Reals.
+From Stdlib Require Import String List ZArith Reals.
 
 Import ListNotations.
 Open Scope string_scope.
 
-From OCL.equivalence Require Import OCLSemantic OCLSyntax.
-From OCL.equivalence Require Import RASyntax Models.
+
+From OCL.equivalence Require Import Models OCLSyntax OCLSemantic RASyntax Utils.
+
+
+
+
+
+Definition bool_unop_sem_ra (op : bool_unop) (v : I_ra) : option I_ra :=
+  match op, v with
+  | UNot, Ira_Bool b => Some (Ira_Bool (negb b))
+  | _, _ => None
+  end.
+
+Definition arith_unop_sem_ra (op : arith_unop) (v : I_ra) : option I_ra :=
+  match op, v with
+  | UNeg,   Ira_Int n  => Some (Ira_Int (-n))
+  | UAbs,   Ira_Int n  => Some (Ira_Int (Z.abs n))
+  | UNeg,   Ira_Real r => Some (Ira_Real (-r))
+  | UAbs,   Ira_Real r => Some (Ira_Real (Rabs r))
+  | UFloor, Ira_Real r => Some (Ira_Int (Int_part r))
+  | URound, Ira_Real r => Some (Ira_Int (round_Z r))
+  | _, _ => None
+  end.
+
+
+
+Definition str_unop_sem_ra (op : str_unop) (v : I_ra) : option I_ra :=
+  match op, v with
+  | UToUpper, Ira_String s => Some (Ira_String (toUpper s))
+  | UToLower, Ira_String s => Some (Ira_String (toLower s))
+  | USize,    Ira_String s => Some (Ira_Int (Z.of_nat (String.length s)))
+  
+  | _, _ => None
+  end.
+
+
+
+
+
+Definition unop_sem_ra (op : unop) (v1 : I_ra) : option I_ra :=
+  match op with
+  | U_Bool  o => bool_unop_sem_ra  o v1
+  | U_Arith o => arith_unop_sem_ra o v1
+  | U_Str   o => str_unop_sem_ra   o v1
+  end.
+
+
+
+Definition bool_binop_sem_ra (op : bool_binop) (b1 b2 : I_ra) : option I_ra :=
+  match op, b1, b2 with
+  | BAnd,     Ira_Bool b1,  Ira_Bool b2 => Some (Ira_Bool (andb b1 b2))
+  | BOr,      Ira_Bool b1,  Ira_Bool b2 => Some (Ira_Bool (orb b1 b2))
+  | BXor,     Ira_Bool b1,  Ira_Bool b2 => Some (Ira_Bool (xorb b1 b2))
+  | BImplies, Ira_Bool b1,  Ira_Bool b2 => Some (Ira_Bool (orb (negb b1) b2))
+
+  | _, _, _ => None
+  end.
+
+
+
+Definition comp_eq_sem_ra (v1 v2 : I_ra) : option bool :=
+  match v1, v2 with
+  | Ira_Int a, Ira_Int b        => Some (a =? b)%Z
+  | Ira_Int a, Ira_Real b      => Some (Reqb (IZR a) b)
+  | Ira_Real a, Ira_Int b      => Some (Reqb a (IZR b))
+  | Ira_Real a, Ira_Real b     => Some (Reqb a b)
+  | Ira_String a, Ira_String b => Some (String.eqb a b)
+  | Ira_Object c1 d1, Ira_Object c2 d2 => Some (andb (String.eqb c1 c2) (String.eqb d1 d2))
+  | _, _ => None
+  end.
+
+
+
+Definition comp_lt_sem_ra (v1 v2 : I_ra) : option bool :=
+  match v1, v2 with
+  | Ira_Int a, Ira_Int b        => Some (a <? b)%Z
+  | Ira_Int a, Ira_Real b      => Some (Rltb (IZR a) b)
+  | Ira_Real a, Ira_Int b      => Some (Rltb a (IZR b))
+  | Ira_Real a, Ira_Real b     => Some (Rltb a b)
+  | _, _ => None
+  end.
+
+
+
+Definition comp_le_sem_ra (v1 v2 : I_ra) : option bool :=
+  match v1, v2 with
+  | Ira_Int a, Ira_Int b        => Some (a <=? b)%Z
+  | Ira_Int a, Ira_Real b      => Some (Rleb (IZR a) b)
+  | Ira_Real a, Ira_Int b      => Some (Rleb a (IZR b))
+  | Ira_Real a, Ira_Real b     => Some (Rleb a b)
+  | _, _ => None
+  end.
+
+
+
+Definition lift_bool_Ie_ra (ob : option bool) : option I_ra :=
+  option_map (fun b => Ira_Bool b) ob.
+  
+Definition comp_binop_sem_ra
+  (op : comp_binop) (v1 v2 : I_ra) : option I_ra :=
+  lift_bool_Ie_ra (
+  match op with
+  | BEq => comp_eq_sem_ra v1 v2
+  | BNe => option_map negb (comp_eq_sem_ra v1 v2)
+  | BLt => comp_lt_sem_ra v1 v2
+  | BLe => comp_le_sem_ra v1 v2
+  | BGt => comp_lt_sem_ra v2 v1
+  | BGe => comp_le_sem_ra v2 v1
+  end
+  ).
+
+
+
+
+Definition arith_binop_sem_ra
+  (op : arith_binop) (v1 v2 : I_ra) : option I_ra :=
+  match op, v1, v2 with
+  | BAdd, Ira_Int a, Ira_Int b => Some (Ira_Int (a + b)%Z)
+  | BAdd, Ira_Int a, Ira_Real b => Some (Ira_Real (IZR a + b))
+  | BAdd, Ira_Real a, Ira_Int b => Some (Ira_Real (a + IZR b))
+  | BAdd, Ira_Real a, Ira_Real b => Some (Ira_Real (a + b))
+
+  | BSub,Ira_Int a, Ira_Int b => Some (Ira_Int (a - b)%Z)
+  | BSub, Ira_Int a, Ira_Real b => Some (Ira_Real (IZR a - b))
+  | BSub, Ira_Real a, Ira_Int b => Some (Ira_Real (a - IZR b))
+  | BSub, Ira_Real a, Ira_Real b => Some (Ira_Real (a - b))
+
+  | BMul, Ira_Int a, Ira_Int b => Some (Ira_Int (a * b)%Z)
+  | BMul, Ira_Int a, Ira_Real b => Some (Ira_Real ((IZR a) * b))
+  | BMul, Ira_Real a, Ira_Int b => Some (Ira_Real (a * IZR b))
+  | BMul, Ira_Real a, Ira_Real b => Some (Ira_Real (a * b))
+
+  | BDiv, Ira_Int a, Ira_Int b => if Z.eqb b 0 then None else Some (Ira_Real (IZR a / IZR b))
+  | BDiv, Ira_Int a, Ira_Real b => if Reqb b 0 then None else Some (Ira_Real (IZR a / b))
+  | BDiv, Ira_Real a, Ira_Int b => if Z.eqb b 0 then None else Some (Ira_Real (a / IZR b))
+  | BDiv, Ira_Real a, Ira_Real b => if Reqb b 0 then None else Some (Ira_Real (a / b))
+
+  | _, _, _ => None
+  end.
+
+
+
+
+
+Definition str_binop_sem_ra
+  (op : str_binop) (v1 v2 : I_ra) : option I_ra :=
+  match op, v1, v2 with
+  | BConcat, Ira_String a, Ira_String b =>
+      Some (Ira_String (a ++ b))
+  | _, _, _ => None
+  end.
+
+
+
+Definition agg_binop_sem_ra
+  (op : agg_binop) (v1 v2 : I_ra) : option I_ra :=
+  match op, v1, v2 with
+  | BMax, Ira_Int a, Ira_Int b =>
+      Some (Ira_Int (Z.max a b))
+
+  | BMax, Ira_Real a, Ira_Real b =>
+      Some (Ira_Real (Rmax a b))
+
+  | BMin, Ira_Int a, Ira_Int b =>
+      Some (Ira_Int (Z.min a b))
+
+  | BMin, Ira_Real a, Ira_Real b =>
+      Some (Ira_Real (Rmin a b))
+
+  | BMod, Ira_Int a, Ira_Int b =>
+      if Z.eqb b 0 then None
+      else Some (Ira_Int (Z.modulo a b))
+
+  | BDivInt, Ira_Int a, Ira_Int b =>
+      if Z.eqb b 0 then None
+      else Some (Ira_Int (a / b)%Z)
+
+  | _, _, _ => None
+  end.
+
+
+
+
+Definition binop_sem_ra (op : binop) (v1 v2 : I_ra) : option I_ra :=
+  match op with
+  | B_Bool  o => bool_binop_sem_ra  o v1 v2
+  | B_Comp  o => comp_binop_sem_ra  o v1 v2
+  | B_Arith o => arith_binop_sem_ra o v1 v2
+  | B_Str   o => str_binop_sem_ra   o v1 v2
+  | B_Agg   o => agg_binop_sem_ra   o v1 v2
+  end.
+
+
+
+
+
+
+
+
 
 
 
@@ -37,84 +229,34 @@ From OCL.equivalence Require Import RASyntax Models.
      - total up to option failure
 *)
 
-Inductive evalRexR : Row -> ra_rex -> value -> Prop :=
+Inductive evalRexR : RowData -> rex -> I_ra -> Prop :=
 
 | ER_Col :
-    forall r c v,
-      r.(r_get) c = Some v ->
-      evalRexR r (RCol c) v
+    forall row cn v,
+      lookup_row cn row = Some v ->
+      evalRexR row (RCol cn) v
 
 | ER_Val :
-    forall r v,
-      evalRexR r (RVal v) v
+    forall row v,
+      evalRexR row (RLit v) v
 
-| ER_BoolUn :
-    forall r op e1 v1 v,
-      evalRexR r e1 v1 ->
-      bool_unop_sem op v1 = Some v ->
-      evalRexR r (RBoolUn op e1) v
+| ER_Unop :
+    forall row op e1 v1 v,
+      evalRexR row e1 v1 ->
+      unop_sem_ra op v1 = Some v ->
+      evalRexR row (RUnop op e1) v
 
-| ER_ArithUn :
-    forall r op e1 v1 v,
-      evalRexR r e1 v1 ->
-      arith_unop_sem op v1 = Some v ->
-      evalRexR r (RArithUn op e1) v
 
-| ER_StrUn :
-    forall r op e1 v1 v,
-      evalRexR r e1 v1 ->
-      str_unop_sem op v1 = Some v ->
-      evalRexR r (RStrUn op e1) v
 
-| ER_BoolBin :
-    forall r op e1 e2 v1 v2 v,
-      evalRexR r e1 (V_Bool v1) ->
-      evalRexR r e2 (V_Bool v2) ->
-      bool_binop_sem op v1 v2 = v ->
-      evalRexR r (RBoolBin op e1 e2) (V_Bool v)
+| ER_Binop :
+    forall row op e1 e2 v1 v2 v,
+      evalRexR row e1 v1 ->
+      evalRexR row e2 v2 ->
+      binop_sem_ra op v1 v2 = Some v ->
+      evalRexR row (RBinop op e1 e2) v
 
-| ER_Comp :
-    forall r op e1 e2 v1 v2 v,
-      evalRexR r e1 v1 ->
-      evalRexR r e2 v2 ->
-      comp_binop_sem op v1 v2 = Some v ->
-      evalRexR r (RComp op e1 e2) (V_Bool v)
 
-| ER_ArithBin :
-    forall r op e1 e2 v1 v2 v,
-      evalRexR r e1 v1 ->
-      evalRexR r e2 v2 ->
-      arith_binop_sem op v1 v2 = Some v ->
-      evalRexR r (RArithBin op e1 e2) v
-
-| ER_StrBin :
-    forall r op e1 e2 v1 v2 v,
-      evalRexR r e1 v1 ->
-      evalRexR r e2 v2 ->
-      str_binop_sem op v1 v2 = Some v ->
-      evalRexR r (RStrBin op e1 e2) v
-
-| ER_AggBin :
-    forall r op e1 e2 v1 v2 v,
-      evalRexR r e1 v1 ->
-      evalRexR r e2 v2 ->
-      agg_binop_sem op v1 v2 = Some v ->
-      evalRexR r (RAggBin op e1 e2) v
-
-(* ------------------- String At ------------------- *)
-| ER_At :
-    forall row rex s i r,
-      evalRexR row rex (V_String s) ->
-      StringAt s i r ->
-      evalRexR row (RAt rex i) (V_String r)
-
-| ER_Substring :
-    forall row rex s i j r,
-      evalRexR row rex (V_String s) ->
-      StringSub s i j r ->
-      evalRexR row (RSubstring rex i j) (V_String r).
-  
-  
+.
 
 
 
@@ -128,65 +270,87 @@ Inductive evalRexR : Row -> ra_rex -> value -> Prop :=
 
 (* Merge two rows (used by join).
    Schema disjointness is guaranteed by typing. *)
-Definition row_merge (r1 r2 : Row) : Row :=
-  {|
-    r_schema := List.app r1.(r_schema) r2.(r_schema);
-    r_get :=
-      fun c =>
-        match r1.(r_get) c with
-        | Some v => Some v
-        | None   => r2.(r_get) c
-        end
-  |}.
+Definition row_merge (r1 r2 : RowData) : RowData :=
+        List.app r1 r2.
 
 
-Definition project_schema (ps : list RAProjItem) : RowSchema :=
+Definition project_schema (ps : list RAProjItem) : list ColName :=
 map proj_name ps.
 
-Inductive project_rowR
-  (ps : list RAProjItem)
-  (r  : Row)
-  : Row -> Prop :=
 
+(* 
+一一对应地求值（核心约束）
+用 combine 构造结果行
+*)
+Inductive project_rowR (ps : list RAProjItem) (r : RowData) : RowData -> Prop :=
 | ProjectRowR :
-    forall r',
-      (* schema 正确 *)
-      r'.(r_schema) = project_schema ps ->
-
-      (* 每一个投影列都能由 RexNode 求值得到 *)
-      (forall p v,
-         In p ps ->
-         evalRexR r (proj_expr p) v ->
-         r'.(r_get) (proj_name p) = Some v) ->
-
-      (* 非投影列不可访问 *)
-      (forall c,
-         ~ In c (project_schema ps) ->
-         r'.(r_get) c = None) ->
-
-      project_rowR ps r r'.
+    forall vs,
+      Forall2 (fun p v => evalRexR r (proj_expr p) v) ps vs ->
+      project_rowR ps r (combine (map proj_name ps) vs).
 
 
-(* 认为row是可以判断是否相等的，但不讨论判等的具体逻辑  *)
-Parameter row_eq_dec : forall (r1 r2 : Row), {r1 = r2} + {r1 <> r2}.
+
+(* 值的判等 *)
+Definition Ira_eq_sem (v1 v2 : I_ra) : option bool :=
+  match v1, v2 with
+  | Ira_Bool b1,   Ira_Bool b2   => Some (Bool.eqb b1 b2)
+
+  | Ira_Int a,     Ira_Int b     => Some (Z.eqb a b)
+  | Ira_Int a,     Ira_Real b    => Some (Reqb (IZR a) b)
+  | Ira_Real a,    Ira_Int b     => Some (Reqb a (IZR b))
+  | Ira_Real a,    Ira_Real b    => Some (Reqb a b)
+
+  | Ira_String s1, Ira_String s2 => Some (String.eqb s1 s2)
+
+  | Ira_Object c1 o1, Ira_Object c2 o2 =>
+      Some (andb (String.eqb c1 c2) (String.eqb o1 o2))
+
+  | _, _ => None
+  end.
 
 
-Fixpoint bag_diff_rows (xs ys : list Row) : list Row :=
+(* 把 option bool 压成 bool *)
+Definition Ira_eqb (v1 v2 : I_ra) : bool :=
+  match Ira_eq_sem v1 v2 with
+  | Some b => b
+  | None => false
+  end.
+
+
+(* RowData 的判等（按 list 结构逐项比较） *)
+Fixpoint rowdata_eqb (r1 r2 : RowData) : bool :=
+  match r1, r2 with
+  | [], [] => true
+  | (k1,v1)::t1, (k2,v2)::t2 =>
+      andb (String.eqb k1 k2)
+           (andb (Ira_eqb v1 v2) (rowdata_eqb t1 t2))
+  | _, _ => false
+  end.
+
+
+Fixpoint row_inb (x : RowData) (ys : list RowData) : bool :=
+  match ys with
+  | [] => false
+  | y :: ys' => if rowdata_eqb x y then true else row_inb x ys'
+  end.
+
+
+Fixpoint bag_diff_rows (xs ys : list RowData) : list RowData :=
   match xs with
   | [] => []
   | x :: xs' =>
-      if in_dec row_eq_dec x ys then
+      if row_inb x ys then
         bag_diff_rows xs' ys
       else
         x :: bag_diff_rows xs' ys
   end.
 
 
-Fixpoint remove_dup_rows (xs : list Row) : list Row :=
+Fixpoint remove_dup_rows (xs : list RowData) : list RowData :=
   match xs with
   | [] => []
   | x :: xs' =>
-      if in_dec row_eq_dec x xs' then
+      if row_inb x xs' then
         remove_dup_rows xs'
       else
         x :: remove_dup_rows xs'
@@ -194,98 +358,102 @@ Fixpoint remove_dup_rows (xs : list Row) : list Row :=
 
 
 
-Definition group_key (gcols : list ColName) (r : Row)
-  : list (option value) :=
-  map (fun c => r.(r_get) c) gcols.
-
-
-(* 认为value是可以判断是否相等的，但不讨论判等的具体逻辑  *)
-Parameter value_eq_dec :
-  forall (v1 v2 : value), {v1 = v2} + {v1 <> v2}.
-
-
-Definition option_value_eq_dec
-  (o1 o2 : option value)
-  : {o1 = o2} + {o1 <> o2}.
-Proof.
-  decide equality.
-  apply value_eq_dec.
-Defined.
-
-Definition list_option_value_eq_dec
-  (xs ys : list (option value))
-  : {xs = ys} + {xs <> ys}.
-Proof.
-  decide equality.
-  apply option_value_eq_dec.
-Defined.
-
-
-(* Definition same_group
-  (gcols : list ColName) (r1 r2 : Row) : Prop :=
-  group_key gcols r1 = group_key gcols r2. *)
+(* 在 RowData中取出给定colname的列值*)
+Fixpoint lookup_col (c : ColName) (r : RowData) : option I_ra :=
+  match r with
+  | [] => None
+  | (k,v) :: tl => if String.eqb k c then Some v else lookup_col c tl
+  end.
 
 
 
-Fixpoint insert_group
-  (gcols : list ColName)
-  (r : Row)
-  (groups : list (list Row))
-  : list (list Row) :=
-  match groups with
-  | [] => [[r]]
-  | grp :: rest =>
-      match grp with
-      | [] => grp :: insert_group gcols r rest
-      | r' :: _ =>
-          if list_option_value_eq_dec
-               (group_key gcols r)
-               (group_key gcols r')
-          then (r :: grp) :: rest
-          else grp :: insert_group gcols r rest
+
+
+
+
+
+Fixpoint all_int_ra (xs : list I_ra) : option (list Z) :=
+  match xs with
+  | [] => Some []
+  | Ira_Int z :: tl =>
+      match all_int_ra tl with
+      | Some zs => Some (z :: zs)
+      | None => None
+      end
+  | _ :: _ => None
+  end.
+
+Fixpoint all_real_ra (xs : list I_ra) : option (list R) :=
+  match xs with
+  | [] => Some []
+  | Ira_Real r :: tl =>
+      match all_real_ra tl with
+      | Some rs => Some (r :: rs)
+      | None => None
+      end
+  | _ :: _ => None
+  end.
+
+
+
+
+
+
+Definition aggop_ra_sem (op : aggop) (xs : list I_ra) : option I_ra :=
+  match op with
+  | AggSize =>
+      Some (Ira_Int (Z.of_nat (length xs)))
+
+  | AggMin =>
+      match all_int_ra xs with
+      | Some (z :: zs) => Some (Ira_Int (fold_left Z.min zs z))
+      | Some [] => None
+      | None =>
+          match all_real_ra xs with
+          | Some (r :: rs) => Some (Ira_Real (fold_left Rmin rs r))
+          | Some [] => None
+          | None => None
+          end
+      end
+
+  | AggMax =>
+      match all_int_ra xs with
+      | Some (z :: zs) => Some (Ira_Int (fold_left Z.max zs z))
+      | Some [] => None
+      | None =>
+          match all_real_ra xs with
+          | Some (r :: rs) => Some (Ira_Real (fold_left Rmax rs r))
+          | Some [] => None
+          | None => None
+          end
+      end
+
+  | AggSum =>
+      match all_int_ra xs with
+      | Some (z :: zs) => Some (Ira_Int (fold_left Z.add zs z))
+      | Some [] => None
+      | None =>
+          match all_real_ra xs with
+          | Some (r :: rs) => Some (Ira_Real (fold_left Rplus rs r))
+          | Some [] => None
+          | None => None
+          end
       end
   end.
 
 
 
 
-Fixpoint group_by
-  (gcols : list ColName)
-  (rows : list Row)
-  : list (list Row) :=
-  match rows with
-  | [] => []
-  | r :: rs =>
-      insert_group gcols r (group_by gcols rs)
-  end.
-
-
-Definition group_key_value
-  (grp : list Row)
-  (c   : ColName)
-  : option value :=
-  match grp with
-  | [] =>
-      (* should not happen for well-formed groups *)
-      None
-  | r :: _ =>
-      r.(r_get) c
-  end.
-
-
-(* OCLSemantic.v 中的aggop_sem *)
-Definition agg_sem := aggop_sem.
-
 
 
 Fixpoint collect_col
-  (grp : list Row)
+  (grp : list RowData)
   (col : ColName)
-  : list value :=
+  : list I_ra :=
   match grp with
   | [] => []
   | r :: rs =>
-      match r.(r_get) col with
+      match lookup_col col r with
       | Some v => v :: collect_col rs col
       | None   => collect_col rs col
       end
@@ -298,10 +466,10 @@ Fixpoint collect_col
   如果是，就按照聚合定义真正算出它的值。
 *)
 Definition eval_agg
-  (grp  : list Row)
+  (grp  : list RowData)
   (c    : ColName)
   (aggs : list (ColName * aggop * ColName))
-  : option value :=
+  : option I_ra :=
   match find
           (fun '(newc, _, _) => String.eqb newc c)
           aggs
@@ -311,32 +479,34 @@ Definition eval_agg
       None
   | Some (_, op, srcCol) =>
       (* apply aggregation operator to source column values *)
-      agg_sem op (collect_col grp srcCol)
+      aggop_ra_sem op (collect_col grp srcCol)
   end.
 
 
 
-Definition values_row (v : value) : Row :=
-  {|
-    r_schema := ["elem"];
-    r_get :=
-      fun c =>
-        if String.eqb c "elem"
-        then Some v
-        else None
-  |}.
 
 
 
 
-(*************************************************************)
+(* 从RowData中提取列名集合 *)
+Definition row_cols (r : RowData) : list ColName :=
+  map fst r.
+
+(* 判断两个 RowData 是否没有共同的列名 *)
+Definition disjoint_cols (r1 r2 : RowData) : Prop :=
+  forall c,
+    ~ (In c (row_cols r1) /\ In c (row_cols r2)).
+
+
+
 (* 笛卡尔积中的行合并关系                                   *)
-(*                                                           *)
 (*  r' 是由 r1 与 r2 通过 row_merge 得到的行                 *)
-(*************************************************************)
-Inductive cartesian_rowR : Row -> Row -> Row -> Prop :=
+Inductive cartesian_rowR : RowData -> RowData -> RowData -> Prop :=
 | CartesianRow_intro :
     forall r1 r2,
+      NoDup (row_cols r1) ->
+      NoDup (row_cols r2) ->
+      disjoint_cols r1 r2 ->
       cartesian_rowR r1 r2 (row_merge r1 r2).
 
 
@@ -346,285 +516,357 @@ Inductive cartesian_rowR : Row -> Row -> Row -> Prop :=
 
 
 
+(* 查找分组键值 *)
+Fixpoint group_key (gcols : list ColName) (r : RowData)
+  : option (list I_ra) :=
+  match gcols with
+  | [] => Some []
+  | c :: cs =>
+      match lookup_col c r, group_key cs r with
+      | Some v, Some vs => Some (v :: vs)
+      | _, _ => None
+      end
+  end.
+
+
+
+
+
+(* 比较 list I_ra 的相等：逐项 Ira_eqb *)
+Fixpoint list_ira_eqb (xs ys : list I_ra) : bool :=
+  match xs, ys with
+  | [], [] => true
+  | x::xs', y::ys' => andb (Ira_eqb x y) (list_ira_eqb xs' ys')
+  | _, _ => false
+  end.
+
+(* 两行在 gcols 上的 key 是否相同（若某列缺失则视为不相同） *)
+Definition same_keyb (gcols : list ColName) (r1 r2 : RowData) : bool :=
+  match group_key gcols r1, group_key gcols r2 with
+  | Some k1, Some k2 => list_ira_eqb k1 k2
+  | _, _ => false
+  end.
+
+(* 把一行 r 插入到已有 groups 中：如果找到同 key 的组就加入，否则新开一组 *)
+Fixpoint insert_group_rows
+  (gcols : list ColName)
+  (r : RowData)
+  (groups : list (list RowData))
+  : list (list RowData) :=
+  match groups with
+  | [] => [[r]]
+  | grp :: rest =>
+      match grp with
+      | [] =>
+          (* 空组不应出现，但为了总函数我们跳过它 *)
+          grp :: insert_group_rows gcols r rest
+      | r0 :: _ =>
+          if same_keyb gcols r r0
+          then (r :: grp) :: rest
+          else grp :: insert_group_rows gcols r rest
+      end
+  end.
+
+(* 主分组函数 *)
+Fixpoint group_by_rows
+  (gcols : list ColName)
+  (rows : list RowData)
+  : list (list RowData) :=
+  match rows with
+  | [] => []
+  | r :: rs => insert_group_rows gcols r (group_by_rows gcols rs)
+  end.
+
+
+
+
+
+
+
+
+(* 从组里取 group-by 列的值：取第一行作为代表 *)
+Definition take_group_cols
+  (gcols : list ColName)
+  (grp : list RowData)
+  : option (list (ColName * I_ra)) :=
+  match grp with
+  | [] => None
+  | r0 :: _ =>
+      let fix aux (cs : list ColName) : option (list (ColName * I_ra)) :=
+          match cs with
+          | [] => Some []
+          | c :: cs' =>
+              match lookup_col c r0, aux cs' with
+              | Some v, Some rest => Some ((c, v) :: rest)
+              | _, _ => None
+              end
+          end
+      in aux gcols
+  end.
+
+(* 计算一个组的所有聚合列 *)
+Fixpoint eval_aggs_cols
+  (grp  : list RowData)
+  (aggs : list (ColName * aggop * ColName))
+  : option (list (ColName * I_ra)) :=
+  match aggs with
+  | [] => Some []
+  | (newc, op, src) :: tl =>
+      match aggop_ra_sem op (collect_col grp src),
+            eval_aggs_cols grp tl with
+      | Some v, Some rest => Some ((newc, v) :: rest)
+      | _, _ => None
+      end
+  end.
+
+
+(* 构造单个组的输出行：key列 ++ agg列 *)
+Definition build_group_row
+  (gcols : list ColName)
+  (aggs  : list (ColName * aggop * ColName))
+  (grp   : list RowData)
+  : option RowData :=
+  match take_group_cols gcols grp, eval_aggs_cols grp aggs with
+  | Some keyvs, Some aggvs => Some (List.app keyvs aggvs)
+  | _, _ => None
+  end.
+
+
+
+
+(* 对所有组构造输出行：若任一组失败 => None *)
+Fixpoint build_group_rows
+  (gcols : list ColName)
+  (aggs  : list (ColName * aggop * ColName))
+  (groups : list (list RowData))
+  : option (list RowData) :=
+  match groups with
+  | [] => Some []
+  | grp :: tl =>
+      match build_group_row gcols aggs grp,
+            build_group_rows gcols aggs tl with
+      | Some r, Some rs => Some (r :: rs)
+      | _, _ => None
+      end
+  end.
+
+
+
+
+
+
+
+
+
+
+
+Definition val_col : ColName := "_val".
+
 (*************************************************************)
-(*                                                           *)
 (*      Relational Algebra Big-step Semantics (Relation)     *)
-(*                                                           *)
-(*  evalRAR db q rows                                        *)
-(*    = 在数据库 db 上，RA 查询 q 成功求值，                 *)
-(*      得到结果表 rows                                     *)
-(*                                                           *)
-(*  说明：                                                   *)
-(*  - 这是“成功语义”（success semantics）                   *)
-(*  - 所有失败情况 = 该关系不可证                           *)
-(*  - RexNode 的求值通过 evalRexR（关系）完成                *)
-(*                                                           *)
 (*************************************************************)
 
-Inductive evalRAR : DBInstance -> ra_rel -> TableInst -> Prop :=
+Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop :=
 
 
-| ER_Empty :
-    forall db,
-      evalRAR db RAEmpty []
+  | ER_Empty :
+      forall (DB : DBInstance SC),
+        evalRelR SC DB RAEmpty []
 
 
-| ER_Values :
-    forall db vs,
-      evalRAR db (RAValues vs)
-        (map (fun v => values_row v) vs)
-
-
-
-
-
-(*************************************************************)
-(* 表扫描：RATable                                           *)
-(*                                                           *)
-(*  如果数据库中存在表 t，其内容为 rows，                    *)
-(*  那么 RATable t 的求值结果就是 rows                       *)
-(*************************************************************)
-| ER_Table :
-    forall db t rows,
-      db.(tables) t = Some rows ->
-      evalRAR db (RATable t) rows
-
-
-| ER_TableSchema :
-    forall db ts rows,
-      db.(tables) ts.(table_name) = Some rows ->
-      evalRAR db (RATableSchema ts) rows
-
-
-(*************************************************************)
-(* 选择：RASelect                                            *)
-(*                                                           *)
-(*  rows' 恰好是 rows 中所有满足：                           *)
-(*    - cond 在该行上可成功求值                              *)
-(*    - 且结果为 true                                        *)
-(*  的行组成的表                                             *)
-(*************************************************************)
-| ER_Select :
-    forall db cond q rows rows',
-      evalRAR db q rows ->
-
-      (* rows' ⊆ rows：所有被保留的行都来自原表 *)
-      (forall r,
-         In r rows' ->
-         In r rows) ->
-
-      (* rows 中满足条件的行一定出现在 rows' 中 *)
-      (forall r,
-         In r rows ->
-         (exists v, evalRexR r cond v /\ v = V_Bool true) ->
-         In r rows') ->
-
-      evalRAR db (RASelect cond q) rows'
-
-
-(*************************************************************)
-(* 投影：RAProject                                          *)
-(*                                                           *)
-(*  对输入表中的每一行 r，                                   *)
-(*  根据投影列表 ps 构造一行 r'                              *)
-(*  project_rowR 描述“r 在 ps 下的投影结果”                 *)
-(*************************************************************)
-| ER_Project :
-    forall db ps q rows rows',
-      evalRAR db q rows ->
-
-      (* 每一个输入行 r 都能投影成某个输出行 r' *)
-      (forall r,
-         In r rows ->
-         exists r',
-           project_rowR ps r r' /\
-           In r' rows') ->
-
-      (* 每一个输出行 r' 都来自某个输入行的投影 *)
-      (forall r',
-         In r' rows' ->
-         exists r,
-           In r rows /\
-           project_rowR ps r r') ->
-
-      evalRAR db (RAProject ps q) rows'
-
-
-
-(*************************************************************)
-(* 笛卡尔积：RACartesian                                     *)
-(*                                                           *)
-(*  对输入表 rows1 与 rows2，输出所有 r1++r2                  *)
-(*  cartesian_rowR 描述“(r1,r2) 生成输出行 r'”                *)
-(*************************************************************)
-| ER_Cartesian :
-    forall db q1 q2 rows1 rows2 rows',
-      evalRAR db q1 rows1 ->
-      evalRAR db q2 rows2 ->
-
-      (* 每一个输入对 (r1,r2) 都能生成某个输出行 r' *)
-      (forall r1 r2,
-         In r1 rows1 ->
-         In r2 rows2 ->
-         exists r',
-           cartesian_rowR r1 r2 r' /\
-           In r' rows') ->
-
-      (* 每一个输出行 r' 都来自某个输入对 (r1,r2) *)
-      (forall r',
-         In r' rows' ->
-         exists r1 r2,
-           In r1 rows1 /\
-           In r2 rows2 /\
-           cartesian_rowR r1 r2 r') ->
-
-      evalRAR db (RACartesian q1 q2) rows'
-
-
-(*************************************************************)
-(* 连接：RAJoin                                             *)
-(*                                                           *)
-(*  rows' 恰好是：                                           *)
-(*    - 从 rows1 × rows2 中                                 *)
-(*    - 合并行 row_merge r1 r2                               *)
-(*    - 且 join 条件在合并行上求值为 true                   *)
-(*  得到的所有结果行                                        *)
-(*************************************************************)
-| ER_Join :
-    forall db cond q1 q2 rows1 rows2 rows',
-      evalRAR db q1 rows1 ->
-      evalRAR db q2 rows2 ->
-
-      (* rows' 中的每一行都来自合法的 join *)
-      (forall r,
-         In r rows' ->
-         exists r1 r2 v,
-           In r1 rows1 /\
-           In r2 rows2 /\
-           r = row_merge r1 r2 /\
-           evalRexR r cond v /\
-           v = V_Bool true) ->
-
-      (* 所有满足 join 条件的合并行都出现在 rows' 中 *)
-      (forall r1 r2 v,
-         In r1 rows1 ->
-         In r2 rows2 ->
-         evalRexR (row_merge r1 r2) cond v ->
-         v = V_Bool true ->
-         In (row_merge r1 r2) rows') ->
-
-      evalRAR db (RAJoin cond q1 q2) rows'
-
-
-(*************************************************************)
-(* 并：RAUnion                                              *)
-(*                                                           *)
-(*  Bag 语义：直接连接两个结果表                            *)
-(*************************************************************)
-| ER_Union :
-    forall db q1 q2 rows1 rows2,
-      evalRAR db q1 rows1 ->
-      evalRAR db q2 rows2 ->
-      evalRAR db (RAUnion q1 q2) (List.app rows1 rows2)
-
-(*************************************************************)
-(* 交：RAIntersect                                          *)
-(*                                                           *)
-(*  集合语义（Set-style）：                                 *)
-(*  A ∩ B ≜ A \ (A \ B)                                     *)
-(*************************************************************)
-
-| ER_Intersect :
-    forall db q1 q2 rows,
-      schema_of db.(schema) q1 = schema_of db.(schema) q2 ->
-      schema_of db.(schema) q1 <> [] ->
-      evalRAR db (RADiff q1 (RADiff q1 q2)) rows ->
-      evalRAR db (RAIntersect q1 q2) rows
+  | ER_BagLiteral :
+      forall (DB : DBInstance SC) (t : T_ra) (vl : list I_ra),
+        evalRelR SC DB (RABagLiteral t vl)
+          (map (fun v => [(val_col, v)]) vl)
 
 
 
 
-(*************************************************************)
-(* 差：RADiff                                               *)
-(*                                                           *)
-(*  使用 bag 差集语义                                       *)
-(*************************************************************)
-(* | ER_Diff :
-    forall db q1 q2 rows1 rows2 rows',
-      evalRAR db q1 rows1 ->
-      evalRAR db q2 rows2 ->
-      bag_diff_rows rows1 rows2 = rows' ->
-      evalRAR db (RADiff q1 q2) rows' *)
-
-| ER_Diff_SameSchema :
-    forall db q1 q2 rows1 rows2 rows',
-      schema_of db.(schema) q1 = schema_of db.(schema) q2 ->
-      evalRAR db q1 rows1 ->
-      evalRAR db q2 rows2 ->
-      bag_diff_rows rows1 rows2 = rows' ->
-      evalRAR db (RADiff q1 q2) rows'
+  (* 表扫描：RATable
+    如果数据库中存在表 t，其内容为 rows，
+    那么 RATable t 的求值结果就是 rows
+  *)
+  | ER_Table :
+      forall (DB : DBInstance SC) (t : TableName) (rows : list RowData),
+        (db_data SC DB ) t = Some rows ->
+        evalRelR SC DB (RATable t) rows
 
 
-| ER_Diff_EmptySchema :
-    forall db q1 q2 rows1 rows2 rows',
-      schema_of db.(schema) q2 = [] ->
-      evalRAR db q1 rows1 ->
-      evalRAR db q2 rows2 ->
-      rows' =
-        match rows2 with
-        | [] => rows1
-        | _  => []
-        end ->
-      evalRAR db (RADiff q1 q2) rows'
 
 
-(*************************************************************)
-(* 去重：RADistinct                                         *)
-(*                                                           *)
-(*  移除表中的重复行                                        *)
-(*************************************************************)
-| ER_Distinct :
-    forall db q rows rows',
-      evalRAR db q rows ->
-      remove_dup_rows rows = rows' ->
-      evalRAR db (RADistinct q) rows'
+  (* 选择：RASelect
+    rows' 恰好是 rows 中所有满足：
+      - cond 在该行上可成功求值
+      - 且结果为 true
+    的行组成的表
+  *)
+  | ER_Select :
+      forall (DB : DBInstance SC) (cond : rex) (rrel : rel)
+           (rows rows' : list RowData),
+        evalRelR SC DB rrel rows ->
+
+        (* 1) rows' ⊆ rows *)
+        (forall r, In r rows' -> In r rows) ->
+
+        (* 2) rows' 中每行都满足 cond=true *)
+        (forall r, In r rows' -> evalRexR r cond (Ira_Bool true)) ->
+
+        (* 3) rows 中所有满足 cond=true 的行都被保留到 rows' *)
+        (forall r, In r rows -> evalRexR r cond (Ira_Bool true) -> In r rows') ->
+
+        evalRelR SC DB (RASelect cond rrel) rows'
 
 
-(*************************************************************)
-(* 聚合：RAAggregate                                        *)
-(*                                                           *)
-(*  1. 先对输入表 rows 按 gcols 分组                        *)
-(*  2. 每个分组生成一行：                                   *) 
-(*     - group by 列直接取 key                              *)
-(*     - 聚合列由 eval_agg 计算                             *)
-(*************************************************************)
 
 
-(* Invariant:
-   - RAAggregate always produces one row per group
-   - group_by [] rows = [rows]
-   - Aggregate results are set-like (no duplicates)
-   - Aggregated relations are only compared, not used in arithmetic
-*)
-| ER_Aggregate :
-    forall db
-           (gcols : list ColName)
-           (aggs  : list (ColName * aggop * ColName))
-           q rows groups rows',
-      evalRAR db q rows ->
-      groups = group_by gcols rows ->
-      rows' =
-        map
-          (fun grp =>
-             {|
-               r_schema := List.app gcols (map (fun '(newc, _, _) => newc) aggs);
-               r_get :=
-                 fun c =>
-                   if in_dec string_dec c gcols then
-                     group_key_value grp c
-                   else
-                     eval_agg grp c aggs
-             |})
-          groups ->
-      evalRAR db (RAAggregate gcols aggs q) rows'.
+  (* 投影：RAProject
+    对输入表中的每一行 r
+    根据投影列表 ps 构造一行 r'
+    project_rowR 描述 r 在 ps 下的投影结果
+  *)
+  | ER_Project :
+      forall (DB : DBInstance SC) (ps : list RAProjItem) (q : rel)
+            (rows rows' : list RowData),
+        evalRelR SC DB q rows ->
+
+        (* 每一个输入行 r 都能投影成某个输出行 r'，且 r' 在 rows' 中 *)
+        (forall r,
+          In r rows ->
+          exists r',
+            project_rowR ps r r' /\ In r' rows') ->
+
+        (* 每一个输出行 r' 都来自某个输入行的投影 *)
+        (forall r',
+          In r' rows' ->
+          exists r,
+            In r rows /\ project_rowR ps r r') ->
+
+        evalRelR SC DB (RAProject ps q) rows'
+
+
+
+
+
+
+  (* 笛卡尔积：RACartesian
+    对输入表 rows1 与 rows2，输出所有 r1++r2
+    cartesian_rowR 描述 (r1,r2) 生成输出行 r'
+  *)
+  | ER_Cartesian :
+      forall (DB : DBInstance SC) (q1 q2 : rel)
+            (rows1 rows2 rows' : list RowData),
+        evalRelR SC DB q1 rows1 ->
+        evalRelR SC DB q2 rows2 ->
+
+        (* 每一个输入对 (r1,r2) 都能生成某个输出行 r'，且 r' 在 rows' 中 *)
+        (forall r1 r2,
+          In r1 rows1 ->
+          In r2 rows2 ->
+          exists r',
+            cartesian_rowR r1 r2 r' /\
+            In r' rows') ->
+
+        (* 每一个输出行 r' 都来自某个输入对 (r1,r2) *)
+        (forall r',
+          In r' rows' ->
+          exists r1 r2,
+            In r1 rows1 /\
+            In r2 rows2 /\
+            cartesian_rowR r1 r2 r') ->
+
+        evalRelR SC DB (RACartesian q1 q2) rows'
+
+
+
+
+  (* 连接：RAJoin
+    rows' 恰好是：
+      - 从 rows1 × rows2 中
+      - 合并行 row_merge r1 r2
+      - 且 join 条件在合并行上求值为 true
+    得到的所有结果行
+  *)
+  | ER_Join :
+      forall (DB : DBInstance SC) (cond : rex) (q1 q2 : rel)
+            (rows1 rows2 rows' : list RowData),
+        evalRelR SC DB q1 rows1 ->
+        evalRelR SC DB q2 rows2 ->
+
+        (* rows' 中的每一行都来自合法的 join，且条件为 true *)
+        (forall r,
+          In r rows' ->
+          exists r1 r2,
+            In r1 rows1 /\
+            In r2 rows2 /\
+            r = row_merge r1 r2 /\
+            evalRexR r cond (Ira_Bool true)) ->
+
+        (* 所有满足 join 条件的合并行都出现在 rows' 中 *)
+        (forall r1 r2,
+          In r1 rows1 ->
+          In r2 rows2 ->
+          evalRexR (row_merge r1 r2) cond (Ira_Bool true) ->
+          In (row_merge r1 r2) rows') ->
+
+        evalRelR SC DB (RAJoin cond q1 q2) rows'
+
+
+
+
+  (* 并：RAUnion
+    Bag 语义：直接连接两个结果表
+  *)
+
+  | ER_Union :
+      forall (DB : DBInstance SC) (q1 q2 : rel)
+            (rows1 rows2 : list RowData),
+        evalRelR SC DB q1 rows1 ->
+        evalRelR SC DB q2 rows2 ->
+        evalRelR SC DB (RAUnion q1 q2) (List.app rows1 rows2)
+
+
+  (* 差：RADiff
+    使用 bag 差集语义
+  *)
+  | ER_Diff :
+      forall (DB : DBInstance SC) (q1 q2 : rel)
+            (rows1 rows2 rows' : list RowData),
+        evalRelR SC DB q1 rows1 ->
+        evalRelR SC DB q2 rows2 ->
+        bag_diff_rows rows1 rows2 = rows' ->
+        evalRelR SC DB (RADiff q1 q2) rows'
+
+
+
+  (* 聚合：RAAggregate  
+    1. 先对输入表 rows 按 gcols 分组
+    2. 每个分组生成一行：
+      - group by 列直接取 key
+      - 聚合列由 eval_agg 计算
+  *)
+
+  (* Invariant:
+    - RAAggregate always produces one row per group
+    - group_by [] rows = [rows]
+    - Aggregate results are set-like (no duplicates)
+    - Aggregated relations are only compared, not used in arithmetic
+  *)
+  | ER_Aggregate :
+      forall (DB : DBInstance SC)
+            (gcols : list ColName)
+            (aggs  : list (ColName * aggop * ColName))
+            (q : rel) (rows : list RowData)
+            (groups : list (list RowData)) (rows' : list RowData),
+        evalRelR SC DB q rows ->
+        groups = group_by_rows gcols rows ->
+        build_group_rows gcols aggs groups = Some rows' ->
+        evalRelR SC DB (RAAggregate gcols aggs q) rows'
+
+
+.
+
+
+
+
+
 

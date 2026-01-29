@@ -53,6 +53,22 @@ Definition str_unop_sem (op : str_unop) (v : I_e) : option I_e :=
 
 
 
+
+Definition unop_sem (op : unop) (v1 : I_e) : option I_e :=
+  match op with
+  | U_Bool  o => bool_unop_sem  o v1
+  | U_Arith o => arith_unop_sem o v1
+  | U_Str   o => str_unop_sem   o v1
+  end.
+
+
+
+
+
+
+
+
+
 Definition bool_binop_sem (op : bool_binop) (b1 b2 : I_e) : option I_e :=
   match op, b1, b2 with
   | BAnd,     
@@ -229,6 +245,21 @@ Definition agg_binop_sem
 
 
 
+Definition binop_sem (op : binop) (v1 v2 : I_e) : option I_e :=
+  match op with
+  | B_Bool  o => bool_binop_sem  o v1 v2
+  | B_Comp  o => comp_binop_sem  o v1 v2
+  | B_Arith o => arith_binop_sem o v1 v2
+  | B_Str   o => str_binop_sem   o v1 v2
+  | B_Agg   o => agg_binop_sem   o v1 v2
+  end.
+
+
+
+
+
+
+
 
 Definition Ie_eqb (v1 v2 : I_h) : bool :=
   match v1, v2 with
@@ -245,49 +276,10 @@ Definition Ie_eqb (v1 v2 : I_h) : bool :=
 Definition bag_union (xs ys : list I_h) : list I_h :=
   List.app xs ys.
 
-(* Definition bag_intersect (xs ys : list I_h) : list I_h :=
-  filter (fun x => existsb (Ie_eqb x) ys) xs. *)
-
 Definition bag_difference (xs ys : list I_h) : list I_h :=
   filter (fun x => negb (existsb (Ie_eqb x) ys)) xs.
 
-(* Definition bag_symdiff (xs ys : list I_h) : list I_h :=
-  bag_union (bag_difference xs ys) (bag_difference ys xs). *)
 
-
-
-
-Definition bag_includes (xs : list I_h) (y : I_h) : bool :=
-  existsb (Ie_eqb y) xs.
-
-
-Definition bag_includes_all (xs ys : list I_h) : bool :=
-  forallb (fun y => existsb (Ie_eqb y) xs) ys.
-
-
-
-Definition bag_excludes (xs : list I_h) (y : I_h): bool :=
-  negb (bag_includes xs y).
-
-Definition bag_excludes_all (xs ys : list I_h) : bool :=
-  forallb (fun y => negb (existsb (Ie_eqb y) xs)) ys.
-
-Definition bag_is_empty (xs : list I_h) : bool :=
-  match xs with
-  | [] => true
-  | _  => false
-  end.
-
-Definition bag_not_empty (xs : list I_h) : bool :=
-  negb (bag_is_empty xs).
-
-Fixpoint bag_is_unique (xs : list I_h) : bool :=
-  match xs with
-  | [] => true
-  | x :: xs' =>
-      negb (existsb (Ie_eqb x) xs')
-      && bag_is_unique xs'
-  end.
 
 
 
@@ -359,7 +351,7 @@ Definition aggop_sem (op : aggop) (xs : list I_h) : option I_e :=
   end.
 
 
-Inductive StringAt : string -> Z -> string -> Prop :=
+(* Inductive StringAt : string -> Z -> string -> Prop :=
   | StringAt_intro :
       forall c s i,
         (i = 1)%Z ->
@@ -379,7 +371,7 @@ Inductive StringSub : string -> Z -> Z -> string -> Prop :=
         StringAt s i r ->
         (* r 的长度 = j - i + 1 *)
         (* 这里可以用辅助关系 LengthString *)
-        StringSub s i j r.
+        StringSub s i j r. *)
 
 
 
@@ -455,8 +447,6 @@ Inductive coerce_basic : T_b -> I_h -> I_h -> Prop :=
 Definition mk_var_b (ih : I_h) (deps : list dep) : var_b :=
   {| var_val := ih; var_deps := deps |}.
 
-Definition mk_val_b (ie : I_e) (deps : list dep) : val_b :=
-  {| val_val := ie; val_deps := deps |}.
 
 
 
@@ -488,31 +478,12 @@ Inductive cevalR (M : object_model) : system_state M -> env -> tm -> val_b -> Pr
     (* 求值规则：
           直接构造一个val_b，值为字面量对应的I_e，依赖变量列表为空
     *)
-      | E_CBool :
-          forall SS E b,
-            cevalR M SS E (CBool b) 
-              {|  val_val  := Ie_Single (Ih_Basic (Ib_Bool b)); 
-                  val_deps := [] |}
 
-      | E_CInt :
-          forall SS E n,
-            cevalR M SS E (CInt n)
-              {|  val_val  := Ie_Single (Ih_Basic (Ib_Int n)); 
+      | E_CLit :
+          forall SS E v,
+            cevalR M SS E (CLit v) 
+              {|  val_val  := Ie_Single (Ih_Basic v); 
                   val_deps := [] |}
-
-      | E_CReal :
-          forall SS E r,
-            cevalR M SS E (CReal r)
-              {|  val_val  := Ie_Single (Ih_Basic (Ib_Real r)); 
-                  val_deps := [] |}
-
-                  
-      | E_CString :
-          forall SS E s,
-            cevalR M SS E (CString s)
-              {|  val_val  := Ie_Single (Ih_Basic (Ib_String s)); 
-                  val_deps := [] |}
-
 
 
 
@@ -522,125 +493,30 @@ Inductive cevalR (M : object_model) : system_state M -> env -> tm -> val_b -> Pr
           根据子表达式的值和操作符计算出结果值，
           构造一个val_b，值为结果值，依赖变量列表为子表达式的依赖变量列表
     *)
-    | E_CBoolUn :
+    | E_CUnop :
         forall SS E op t vb v',
           cevalR M SS E t vb ->
-          bool_unop_sem op (val_val vb) = Some v' ->
-          cevalR M SS E (CBoolUn op t) 
-              {|  val_val  := v'; 
-                  val_deps := (val_deps vb) |}
-
-
-    | E_CArithUn :
-        forall SS E op t vb v',
-          cevalR M SS E t vb ->
-          arith_unop_sem op (val_val vb) = Some v' ->
-          cevalR M SS E (CArithUn op t) 
-              {|  val_val  := v'; 
-                  val_deps := (val_deps vb) |}
-
-
-    | E_CStrUn :
-        forall SS E op t vb v',
-          cevalR M SS E t vb ->
-          str_unop_sem op (val_val vb) = Some v' ->
-          cevalR M SS E (CStrUn op t) 
+          unop_sem op (val_val vb) = Some v' ->
+          cevalR M SS E (CUnop op t) 
               {|  val_val  := v';
                   val_deps := (val_deps vb) |}
 
 
-    | E_ESubstring :
-        forall SS E t vb s i j r,
-          cevalR M SS E t vb ->
-          val_val vb = Ie_Single (Ih_Basic (Ib_String s)) ->
-          StringSub s i j r ->
-          cevalR M SS E (CSubstring t i j)
-            {| val_val  := Ie_Single (Ih_Basic (Ib_String r));
-              val_deps := val_deps vb |}
 
+                  
 
     (*  basic type 有参operation： 二元操作  *)
-
-    (* 二元逻辑运算 *)
-    (* 求值规则：
-          先求出两个子表达式的值和依赖变量列表，
-          根据两个子表达式的值和操作符计算出结果值，
-          构造一个val_b，值为结果值，依赖变量列表为两个子表达式的依赖变量列表的并集
-    *)
-    | E_CBoolBin :
+    | E_CBinop :
         forall SS E op t1 t2 vb1 vb2 v',
           cevalR M SS E t1 vb1 ->
           cevalR M SS E t2 vb2 ->
-          bool_binop_sem op (val_val vb1) (val_val vb2) = Some v' ->
-          cevalR M SS E (CBoolBin op t1 t2) 
+          binop_sem op (val_val vb1) (val_val vb2) = Some v' ->
+          cevalR M SS E (CBinop op t1 t2)
               {|  val_val  := v';
                   val_deps := dep_union (val_deps vb1) (val_deps vb2) |}
 
 
-    (* 二元比较运算 *)
-    (* 求值规则：
-          先求出两个子表达式的值和依赖变量列表，
-          根据两个子表达式的值和操作符计算出结果值，
-          构造一个val_b，值为结果值，依赖变量列表为两个子表达式的依赖变量列表的并集
-    *)
-    | E_CCompBin :
-        forall SS E op t1 t2 vb1 vb2 v',
-          cevalR M SS E t1 vb1 ->
-          cevalR M SS E t2 vb2 ->
-          comp_binop_sem op (val_val vb1) (val_val vb2) = Some v' ->
-          cevalR M SS E (CCompBin op t1 t2)
-              {|  val_val  := v';
-                  val_deps := dep_union (val_deps vb1) (val_deps vb2) |}
 
-
-    (* 二元算数运算 *)
-    (* 求值规则：
-          先求出两个子表达式的值和依赖变量列表，
-          根据两个子表达式的值和操作符计算出结果值，
-          构造一个val_b，值为结果值，依赖变量列表为两个子表达式的依赖变量列表的并集
-    *)
-    | E_CArithBin :
-        forall SS E op t1 t2 v1 v2 v',
-          cevalR M SS E t1 v1 ->
-          cevalR M SS E t2 v2 ->
-          arith_binop_sem op (val_val v1) (val_val v2) = Some v' ->
-          cevalR M SS E (CArithBin op t1 t2)
-              {|  val_val  := v';
-                  val_deps := dep_union (val_deps v1) (val_deps v2) |}
-
-
-
-    (* 二元字符串运算 *)
-    (* 求值规则：
-          先求出两个子表达式的值和依赖变量列表，
-          根据两个子表达式的值和操作符计算出结果值，
-          构造一个val_b，值为结果值，依赖变量列表为两个子表达式的依赖变量列表的并集
-    *)
-    | E_CStrBin :
-        forall SS E op t1 t2 v1 v2 v',
-          cevalR M SS E t1 v1 ->
-          cevalR M SS E t2 v2 ->
-          str_binop_sem op (val_val v1) (val_val v2) = Some v' ->
-          cevalR M SS E (CStrBin op t1 t2)
-              {|  val_val  := v';
-                  val_deps := dep_union (val_deps v1) (val_deps v2) |}
-
-
-
-    (* 二元聚合运算 *)
-    (* 求值规则：
-          先求出两个子表达式的值和依赖变量列表，
-          根据两个子表达式的值和操作符计算出结果值，
-          构造一个val_b，值为结果值，依赖变量列表为两个子表达式的依赖变量列表的并集
-    *)
-    | E_CAggBin :
-        forall SS E op t1 t2 v1 v2 v',
-          cevalR M SS E t1 v1 ->
-          cevalR M SS E t2 v2 ->
-          agg_binop_sem op (val_val v1) (val_val v2) = Some v' ->
-          cevalR M SS E (CAggBin op t1 t2)
-              {|  val_val  := v';
-                  val_deps := dep_union (val_deps v1) (val_deps v2) |}
 
 
 
@@ -807,34 +683,6 @@ Inductive cevalR (M : object_model) : system_state M -> env -> tm -> val_b -> Pr
             {| val_val := Ie_Bag Th out; val_deps := deps |}
 
 
-    (* | E_CCollect :
-          forall M E bag_tm attr vs vs',
-            cevalR M E bag_tm (V_Bag vs) ->
-            E_Collect M E attr vs vs' ->
-            cevalR M E (CCollect bag_tm attr) (V_Bag vs') *)
-
-
-
-    (* | E_CRCollect :
-          forall M E bag_tm role vs vs',
-            cevalR M E bag_tm (V_Bag vs) ->
-            E_RCollect M E role vs vs' ->
-            cevalR M E (CRCollect bag_tm role) (V_Bag vs') *)
-
-
-    (* | E_CNRCollect :
-          forall M E bag_tm nrole vs vs',
-            cevalR M E bag_tm (V_Bag vs) ->
-            E_NRCollect M E nrole vs vs' ->
-            cevalR M E (CNRCollect bag_tm nrole) (V_Bag vs') *)
-
-
-    (* context C inv body 语义：对所有实例执行 forAll *)
-    (* | E_CContext :
-        forall M E C body v,
-          cevalR M E (CForAll (CAllInstances C) "self" body) v ->
-          cevalR M E (CContext C body) v *)
-    
 
 
     with E_Select (M : object_model) : system_state M -> env -> string -> tm ->
@@ -879,72 +727,6 @@ Inductive cevalR (M : object_model) : system_state M -> env -> tm -> val_b -> Pr
                 {| val_val  := Ie_Bag Th out_tl;
                    val_deps := deps |}
 
-
-
-
-
-
-
-      (* with E_Collect :
-              ObjectModel -> env -> string ->
-              list value -> list value -> Prop :=
-        
-        | E_CollectNil :
-            forall M E attr,
-              E_Collect M E attr [] []
-        
-        | E_CollectCons :
-            forall M E attr v tl v_attr out_tl,
-              E_Attr M v attr v_attr ->
-              E_Collect M E attr tl out_tl ->
-              E_Collect M E attr (v :: tl) (v_attr :: out_tl) *)
-            
-
-      (* with E_Role :
-              ObjectModel -> value -> string -> value -> Prop :=
-        | E_ObjRole :
-            forall M oid role r_oid,
-              obj_role1 (objects M oid) role = r_oid ->
-              E_Role M (V_Object oid) role (V_Object r_oid) *)
-
-
-      (* with E_RCollect :
-              ObjectModel -> env -> string ->
-              list value -> list value -> Prop :=
-        
-        | E_RCollectNil :
-            forall M E role,
-              E_RCollect M E role [] []
-        
-        | E_RCollectCons :
-            forall M E role v tl v' out_tl,
-              E_Role M v role v' ->
-              E_RCollect M E role tl out_tl ->
-              E_RCollect M E role (v :: tl) (v' :: out_tl) *)
-
-
-
-      (* with E_NRole :
-              ObjectModel -> value -> string -> list value -> Prop :=
-        | E_ObjNRole :
-            forall M oid role oids,
-              obj_rolen (objects M oid) role = oids ->
-              E_NRole M (V_Object oid) role (map V_Object oids) *)
-
-
-      (* with E_NRCollect :
-              ObjectModel -> env -> string ->
-              list value -> list value -> Prop :=
-            
-        | E_NRCollectNil :
-            forall M E role,
-              E_NRCollect M E role [] []
-        
-        | E_NRCollectCons :
-            forall M E role v tl vs out_tl,
-              E_NRole M v role vs ->
-              E_NRCollect M E role tl out_tl ->
-              E_NRCollect M E role (v :: tl) (vs ++ out_tl) *)
               
 .
 
