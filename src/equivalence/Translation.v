@@ -15,7 +15,7 @@ From OCL.equivalence Require Import Models OCLSyntax RASyntax RASemantic OCLTypi
 
 
 (* 取 schema 的最后一列 *)
-Definition last_col (cols : list ColName) : option ColName :=
+Definition last_col (cols : list string) : option string :=
     match rev cols with
     | [] => None
     | c :: _ => Some c
@@ -38,7 +38,7 @@ Definition groupkey := list string.
 
 
   
-Definition proj_cols (cs : list ColName)
+Definition proj_cols (cs : list string)
 : list RAProjItem :=
 map
   (fun c =>
@@ -48,7 +48,7 @@ map
 
 
 
-Fixpoint proj_cols_r (CS : list ColName) : list RAProjItem :=
+Fixpoint proj_cols_r (CS : list string) : list RAProjItem :=
     match CS with
     | [] => []
     | c :: cs =>
@@ -58,7 +58,7 @@ Fixpoint proj_cols_r (CS : list ColName) : list RAProjItem :=
   
 
 
-Fixpoint mk_cols_join_cond (CS : list ColName) : option rex :=
+Fixpoint mk_cols_join_cond (CS : list string) : option rex :=
     match CS with
     | [] => None
     | c :: cs =>
@@ -327,7 +327,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
         - 转换为 表扫描+project oid列为val_col
     *)
     | CAllInstances class =>
-        match lookup_class (CLASS M) class with
+        match lookup_class M class with
         | Some table =>
             Some (
                 Rel ( RAProject [(mkProj val_col (RCol oid_col))] (RATable class)),
@@ -339,265 +339,137 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
 
 
-    (* | CAttr tm attr =>
-        match translate M E tm with
-        (* 
-            1. tm 成功转换为一个表示cn类型对象的 rel
-            2. 从 schema中成功查找到该类对应的表存在attr字段，表示对象表objTable存在、字段存在
-            3. 将tm转换的结果rel和 对象对应的表objTable进行连接操作，
+
+    (* 
+        转换规则:
+        - 转换为 join+project
+            - tm 成功转换为一个表示cn类型对象的 rel
+            - 从 object model中成功查找到该类存在attr字段，表示对象表objTable存在、字段存在
+            -将tm转换的结果rel和 对象对应的表objTable进行连接操作，
                 连接条件为rel的最后一列（val_col）和对象表objTable的oid_col相等，
-            4. 最后投影出rel中除了val_col的所有列，以及将objTable中的attr列投影为val_col列，
+            - 最后投影出rel中除了val_col的所有列，以及将objTable中的attr列投影为val_col列，
                 类型为attr的类型
-        *)
+    *)
+    | CAttr tm attr =>
+        match translate M E tm with
+        | Some (Rel q, vl, Te_Single (Th_Object cn) ) =>
+            match lookup_attr_type M cn attr with
+            | Some tb =>
+                let jocnd := RBinop (B_Comp BEq)  (RCol val_col) (RCol oid_col) in
+                let vcol := mkProj val_col (RCol attr) in
+                let projcols := List.app (proj_cols vl) [vcol] in
+                    Some (
+                        Rel (RAProject projcols (RAJoin jocnd q (RATable cn))),
+                        vl,
+                        Te_Single (Th_Basic tb)
+                    )
 
-
-
-
-        | Some (Rel q) =>
-            match cols_of_rel (sc_data SC) q with
-            | Some cols =>
-                match last_col_ty cols with 
-                | Some (Tra_Object cn) =>
-                    match lookup_table_column SC cn attr with
-                    Some acol =>
-                        let cond :=  RBinop (B_Comp BEq) (RCol val_col) (RCol attr) in
-                        let join_res := RAJoin cond q (RATable cn) in 
-                        let vd_cols := proj_cols (removelast (map col_name cols)) in
-                        Some 
-                        (
-                            Rel 
-                            (RAProject 
-                            (List.app vd_cols [mkProj val_col (RCol attr) ] )
-                            join_res)
-                        )
-                    | _ => None
-                    end
-                | _ => None
-                end
             | _ => None
             end
         | _ => None
-        end  *)
+        end
 
 
+
+
+
+
+
+
+
+
+    (* 
+        转换规则:
+        - 转换为 join+project
+            - tm 成功转换为一个表示cn类型对象的 rel
+            - 从 object model中成功查找到该类存在assoc关系和role字段，表示关系表assoTable存在、字段存在
+            -将tm转换的结果rel和 关系表assoTable进行连接操作，
+                连接条件为rel的最后一列（val_col）和关系表assoTable的role列相等，
+            - 最后投影出rel中除了val_col的所有列，以及将assoTable中的role列投影为val_col列，
+                类型为role对应的对象的类型
+    *)
     | CRole tm role =>
-        None  (* 见下面注释 *)
+        match translate M E tm with
+        | Some (Rel q, vl, Te_Single (Th_Object cn) ) =>
+            match lookup_role_type M cn role,
+                lookup_assoc_of_role M cn role,
+                lookup_nav_multiplicity M cn role with
+            | Some cn', Some asso, Some One =>
+                let jocnd := RBinop (B_Comp BEq)  (RCol val_col) (RCol role) in
+                let vcol := mkProj val_col (RCol role) in
+                let projcols := List.app (proj_cols vl) [vcol] in
+                    Some (
+                        Rel (RAProject projcols (RAJoin jocnd q (RATable asso))),
+                        vl,
+                        Te_Single (Th_Object cn')
+                    )
+            | _, _, _ => None
+            end
+        | _ => None
+        end
 
 
+
+
+
+    (* 
+        转换规则:
+        - 转换为 join+project
+            - tm 成功转换为一个表示cn类型对象的 rel
+            - 从 object model中成功查找到该类存在assoc关系和role字段，表示关系表assoTable存在、字段存在
+            -将tm转换的结果rel和 关系表assoTable进行连接操作，
+                连接条件为rel的最后一列（val_col）和关系表assoTable的role列相等，
+            - 最后投影出rel中除了val_col的所有列，以及将assoTable中的role列投影为val_col列，
+                类型为role对应的对象的集合的类型
+    *)
     | CNRole tm nrole =>
-        None  (* 见下面注释 *)
-
-
-
-    (* | CBagLiteral ts =>
-        match mapM eval_literal ts with
-        | Some vs => Some ((RAValues vs), [])
-        | None => None
-        end *)
-
-
-
-
-
-
-
-
-
-
-    (*  对象 / 属性 / 角色  *)
-    (* | CAttr tm attr  =>
-
-        match translate_rel M Gamma tm with
-        | None => None
-        | Some (qObj, gks) =>
-            (* 假设你能从 qObj 的 schema 中确定 C *)
-            match infer_class_from_schema (umlToSchema M) qObj with
-            | None => None
-            | Some C =>
-                let oid := oidColName C in
-                let qClass := RATable C in
-
-                let qR :=
-                    RAProject
-                    [ {| proj_expr := RCol oid;  proj_name := "oid_r" |}
-                    ; {| proj_expr := RCol attr; proj_name := attr   |}
-                    ]
-                    qClass
-                    in
-                let qJ := 
-                    RAJoin
-                    (RComp BEq (RCol oid) (RCol "oid_r"))
-                    qObj qR
-                    in
-
-                Some
-                    (RAProject
-                        ( map
-                            (fun c =>
-                               {| proj_expr := RCol c;       proj_name := c   |})
-                            (schema_of (umlToSchema M) qObj)
-                            ++
-                            [{| proj_expr := RCol attr; proj_name := attr |}]
-                        )
-                        qJ 
-                        , gks )
-
+        match translate M E tm with
+        | Some (Rel q, vl, Te_Single (Th_Object cn) ) =>
+            match lookup_role_type M cn nrole,
+                lookup_assoc_of_role M cn nrole,
+                lookup_nav_multiplicity M cn nrole with
+            | Some cn', Some asso, Some Many =>
+                let jocnd := RBinop (B_Comp BEq)  (RCol val_col) (RCol nrole) in
+                let vcol := mkProj val_col (RCol nrole) in
+                let projcols := List.app (proj_cols vl) [vcol] in
+                    Some (
+                        Rel (RAProject projcols (RAJoin jocnd q (RATable asso))),
+                        vl,
+                        Te_Bag (Th_Object cn')
+                    )
+            | _, _, _ => None
             end
-        end *)
+        | _ => None
+        end
 
 
-    (* | CRole tm role =>
-        match translate_rel M Gamma tm with
-        | None => None
-        | Some (qObj, gks) =>
-            (* 从对象集合 qObj 的最后一列 oid 推断所属类 C *)
-            match infer_class_from_schema (umlToSchema M) qObj with
-            | None => None
-            | Some C =>
-                (* 在 UMLModel 中查找 (C, role) 对应的关联 *)
-                match lookup_role_assoc M.(uml_assocs) C role with
-                | None => None
-                | Some A =>
-                    let oidC := oidColName C in
-                    let D    := A.(assoc_c2) in
-                    let oidD := oidColName D in
-    
-                    (* 关联表 *)
-                    let qAssoc := RATable (assoc_name A) in
 
-                    (* 右侧：关联表，仅保留两端 oid，并将 C 端 oid 重命名为 oid_r *)
-                    let qR :=
-                      RAProject
-                        [ {| proj_expr := RCol oidC; proj_name := "oid_r" |}
-                        ; {| proj_expr := RCol oidD; proj_name := oidD    |}
-                        ]
-                        qAssoc
-                    in
-    
-                    (* 按 C 端 oid 等值连接 *)
-                    let qJ :=
-                      RAJoin
-                        (RComp BEq (RCol oidC) (RCol "oid_r"))
-                        qObj qR
-                    in
-    
-                    Some
-                    (RAProject
-                       (
-                         (* 左表原有列全部保留 *)
-                         map
-                           (fun c =>
-                              {| proj_expr := RCol c; proj_name := c |})
-                              (schema_of (umlToSchema M) qObj)
-                         ++
-                         (* 追加右表目标端 oid *)
-                         [{| proj_expr := RCol oidD; proj_name := oidD |}]
-                       )
-                       qJ 
-                       , gks )
-                end
-            end
-        end *)
-    
 
+    (*  Bag type 有参operation： 字面量构造器 *)
     (* 
-        遇到nrole时，将nrole前的rel的所有列作为groupkey记录下来。
-        nrole只会发生在obj对象上产生bag，因此后续若进行agg操作，语义是以obj为分组进行agg。
-        若在rel->collect(nrole)操作中使用了nrole，此时是对rel集合取nrole的集合
-        并进行flatten（见手册11.9.1中对collect操作的语义说明），因此groupkey不变。
+        转换规则:
+        - 转换为 一列多行的RABagLiteral
+        - 依赖变量列表为空
+        - 类型为值的集合的类型
     *)
-
-    (* 
-        Invariant（groupkey 不变量）
-        对任意 (q, GK)：
-
-        GK = [] 表示 q 描述的是一个全局 Bag
-
-        GK ≠ [] 表示 q 描述的是一个 按 GK 分组的 Bag family
-
-        所有 RA 运算都必须保持这一解释一致
-    *)
-
-
-    (* | CNRole tm nrole =>
-        match translate_rel M Gamma tm with
-        | None => None
-        | Some (qObj, gks) =>
-            (* 从对象集合 qObj 的最后一列 oid 推断所属类 C *)
-            match infer_class_from_schema (umlToSchema M) qObj with
-            | None => None
-            | Some C =>
-                (* 在 UMLModel 中查找 (C, nrole) 对应的关联 *)
-                match lookup_role_assoc M.(uml_assocs) C nrole with
-                | None => None
-                | Some A =>
-                    let oidC := oidColName C in
-                    let D    := A.(assoc_c2) in
-                    let oidD := oidColName D in
-
-                    (* 关联表 *)
-                    let qAssoc := RATable (assoc_name A) in
-
-                    (* 右侧：关联表，仅保留两端 oid，并将 C 端 oid 重命名为 oid_r *)
-                    let qR :=
-                        RAProject
-                        [ {| proj_expr := RCol oidC; proj_name := "oid_r" |}
-                        ; {| proj_expr := RCol oidD; proj_name := oidD    |}
-                        ]
-                        qAssoc
-                    in
-
-                    (* 按 C 端 oid 等值连接（1:n 展开点） *)
-                    let qJ :=
-                        RAJoin
-                        (RComp BEq (RCol oidC) (RCol "oid_r"))
-                        qObj qR
-                    in
-
-                    let qOut :=
-                        RAProject
-                        (
-                            (* 左表原有列全部保留 *)
-                            map
-                            (fun c =>
-                                {| proj_expr := RCol c; proj_name := c |})
-                            (schema_of (umlToSchema M) qObj)
-                            ++
-                            (* 追加右表目标端 oid（nrole 的结果） *)
-                            [{| proj_expr := RCol oidD; proj_name := oidD |}]
-                        )
-                        qJ
-                    in
-
-                    Some (qOut, schema_of (umlToSchema M) qObj)
-                end
-            end
-        end *)
-
-
-
-    (*  allInstances  *)
-    (* 转换规则为，从class表中投影出oid列，groupkey为空 *)
-    (* | CAllInstances class =>
-        let oid := oidColName class in
-        let qClass := RATable class in
-        Some
-        ( RAProject
-            [ {| proj_expr := RCol oid; proj_name := oid |} ]
-            qClass
-        , [] (* groupkey 为空 *)
-        ) *)
-
-
-      
+    | CBagLiteral tb tl =>
+        let tra := enc_Tb tb in
+        let tl' := map enc_Ib tl in
+        Some (
+            Rel (RABagLiteral tra tl'),
+            [],
+            Te_Bag (Th_Basic tb)
+        )
 
 
 
 
 
-    (*  Bag 运算  *)
+
+
+    (*  Bag type 有参operation： Bag 集合运算  *)
     (*  Bag union  *)
-    (* | CUnion t1 t2 =>
+    | CUnion t1 t2 =>
         match translate_rel M Gamma t1,
             translate_rel M Gamma t2 with
         | Some (q1, gk1), Some (q2, gk2) =>
@@ -661,7 +533,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 end
             end
         | _, _ => None
-        end *)
+        end 
 
 
 
