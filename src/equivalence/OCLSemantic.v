@@ -588,31 +588,11 @@ Inductive cevalR (M : object_model) : system_state M -> env -> tm -> val_b -> Pr
     (* 求值规则：
         直接构造一个空的Bag，值为包含空列表的Ie_Bag，依赖变量列表为空
     *)
-    | E_CBagLiteral_nil :
-        forall SS E Tb,
-          cevalR M SS E (CBagLiteral Tb [])
-            {|  val_val  := Ie_Bag (Th_Basic Tb) [];
-                val_deps := [] |}
-
-    (* 求值规则：
-        先求出head元素的值和依赖变量列表，
-        对head元素值进行类型强制转换，
-        再递归求值tail BagLiteral Tb ts的值和依赖变量列表，
-        最后构造一个val_b，值为head元素值加上tail元素值组成的Bag，依赖变量列表为空
-    *)
-    | E_CBagLiteral_cons :
-        forall SS E Tb t ts vb ih ih' vb_tail ihs,
-          (* head *)
-          cevalR M SS E t vb ->
-          val_val vb = Ie_Single ih ->
-          coerce_basic Tb ih ih' ->
-          (* tail: 递归求值 BagLiteral Tb ts *)
-          cevalR M SS E (CBagLiteral Tb ts) vb_tail ->
-          val_val vb_tail = Ie_Bag (Th_Basic Tb) ihs ->
-          (* result *)
-          cevalR M SS E (CBagLiteral Tb (t :: ts))
-            {|  val_val  := Ie_Bag (Th_Basic Tb) (ih' :: ihs);
-                val_deps := [] |}
+    | E_CBagLiteral :
+        forall SS E Tb vs,
+          cevalR M SS E (CBagLiteral Tb vs)
+            {| val_val  := Ie_Bag (Th_Basic Tb) (map (fun ib => Ih_Basic ib) vs);
+              val_deps := [] |}
 
 
 

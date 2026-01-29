@@ -96,7 +96,7 @@ Inductive tm : Type :=
     | CNRole   : tm -> role_name -> tm
 
     (*  Bag type 有参operation： 字面量构造器 *)
-    | CBagLiteral : T_b -> list tm -> tm
+    | CBagLiteral : T_b -> list I_b -> tm
 
     (*  Bag type 有参operation： Bag 集合运算  *)
     | CUnion        : tm -> tm -> tm

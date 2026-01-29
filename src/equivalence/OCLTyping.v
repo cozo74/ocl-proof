@@ -225,14 +225,14 @@ Inductive has_type : context -> object_model -> tm -> T_e -> Prop :=
     | T_Attr :
         forall Gamma M t c attr T,
             has_type Gamma M t (Te_Single (Th_Object c)) ->
-            lookup_attr_type (ATT_c M) c attr = Some T ->
+            lookup_attr_type M c attr = Some T ->
             has_type Gamma M (CAttr t attr) (Te_Single (Th_Basic T))
 
 
     | T_Role :
         forall Gamma M t c1 c2 role,
             has_type Gamma M t (Te_Single (Th_Object c1)) ->
-            lookup_role_type (ASSOC M) (associates M) (roles M) c1 role = Some c2 ->
+            lookup_role_type M c1 role = Some c2 ->
             has_type Gamma M (CRole t role) (Te_Single (Th_Object c2))
 
 
@@ -240,7 +240,7 @@ Inductive has_type : context -> object_model -> tm -> T_e -> Prop :=
     | T_NRole :
         forall Gamma M t c1 c2 nrole,
             has_type Gamma M t (Te_Single (Th_Object c1)) ->
-            lookup_role_type (ASSOC M) (associates M) (roles M) c1 nrole = Some c2 ->
+            lookup_role_type M c1 nrole = Some c2 ->
             has_type Gamma M (CNRole t nrole) (Te_Single (Th_Object c2)) 
 
 
@@ -248,9 +248,9 @@ Inductive has_type : context -> object_model -> tm -> T_e -> Prop :=
 
     (*  Bag type 有参operation： 字面量构造器 *)
     | T_BagLiteral :
-        forall Gamma M ts Tb,
-            (forall t, In t ts -> has_type Gamma M t (Te_Single (Th_Basic Tb))) ->
-            has_type Gamma M (CBagLiteral Tb ts) (Te_Bag (Th_Basic Tb))
+        forall Gamma M vs Tb,
+        (forall v, In v vs -> Ib_type v = Tb) ->
+        has_type Gamma M (CBagLiteral Tb vs) (Te_Bag (Th_Basic Tb))
 
 
 
