@@ -80,7 +80,13 @@ Inductive I_e : Type :=
 
 
 
-
+Definition Ib_type (v : I_b) : T_b :=
+  match v with
+  | Ib_Bool _   => Tb_Bool
+  | Ib_Int _    => Tb_Int
+  | Ib_Real _   => Tb_Real
+  | Ib_String _ => Tb_String
+  end.
 
 
 
@@ -136,73 +142,6 @@ Definition disjoint_strings (xs ys : list string) : Prop :=
 
 
 
-Fixpoint find_attr_type
-  (an : attr_name)
-  (attrs : list attr_sig)
-  : option T_b :=
-  match attrs with
-  | [] => None
-  | a :: tl =>
-      if String.eqb (att_name a) an
-      then Some (att_type a)
-      else find_attr_type an tl
-  end.
-
-
-
-(* 给定object_model_data，class_name，attr_name，查询attr_type *)
-Definition lookup_attr_type
-  (ATT_c : class_name -> option (list attr_sig))
-  (cn : class_name)
-  (an : attr_name)
-  : option T_b :=
-  match ATT_c cn with
-  | None => None
-  | Some attrs => find_attr_type an attrs
-  end.
-
-
-
-Definition lookup_role_type_in_assoc
-  (c : class_name)
-  (r : role_name)
-  (ap : assoc_pair)
-  (rp : role_pair)
-  : option class_name :=
-  if andb (String.eqb c (c1 ap)) (String.eqb r (r1 rp)) then
-    Some (c2 ap)
-  else if andb (String.eqb c (c2 ap)) (String.eqb r (r2 rp)) then
-    Some (c1 ap)
-  else
-    None.
-
-
-
-(* 给定object_model_data，class_name，role_name，查询role_type  *)
-Definition lookup_role_type
-  (ASSOC : list assoc_name)
-  (associates : assoc_name -> option assoc_pair)
-  (roles : assoc_name -> option role_pair)
-  (c : class_name)
-  (r : role_name)
-  : option class_name :=
-  let fix aux (assocs : list assoc_name) : option class_name :=
-      match assocs with
-      | [] => None
-      | asso :: tl =>
-          match associates asso, roles asso with
-          | Some ap, Some rp =>
-              match lookup_role_type_in_assoc c r ap rp with
-              | Some t => Some t
-              | None   => aux tl
-              end
-          | _, _ => aux tl
-          end
-      end
-  in aux (ASSOC).
-
-
-
 
 
 (* gives the set of all role names reachable (or navigable) from a class over a given association. *)
@@ -247,6 +186,8 @@ Definition attr_names_of (ATT_c : class_name -> option (list attr_sig)) (c : cla
   | Some attrs => map att_name attrs
   | None => []
   end.
+
+
 
 
 
@@ -330,6 +271,107 @@ Record object_model : Type := {
 
 
 }.
+
+
+
+
+
+Definition lookup_class (M : object_model) (c : class_name)
+  : option class_name :=
+  if existsb (String.eqb c) (CLASS M) then Some c else None.
+
+
+
+
+
+Fixpoint find_attr_type
+  (an : attr_name)
+  (attrs : list attr_sig)
+  : option T_b :=
+  match attrs with
+  | [] => None
+  | a :: tl =>
+      if String.eqb (att_name a) an
+      then Some (att_type a)
+      else find_attr_type an tl
+  end.
+
+
+
+(* 给定object_model_data，class_name，attr_name，查询attr_type *)
+Definition lookup_attr_type
+  (M : object_model)
+  (cn : class_name)
+  (an : attr_name)
+  : option T_b :=
+  match ATT_c M cn with
+  | None => None
+  | Some attrs => find_attr_type an attrs
+  end.
+
+
+
+Definition lookup_role_type_in_assoc
+  (c : class_name)
+  (r : role_name)
+  (ap : assoc_pair)
+  (rp : role_pair)
+  : option class_name :=
+  if andb (String.eqb c (c1 ap)) (String.eqb r (r1 rp)) then
+    Some (c2 ap)
+  else if andb (String.eqb c (c2 ap)) (String.eqb r (r2 rp)) then
+    Some (c1 ap)
+  else
+    None.
+
+
+
+(* 给定object_model_data，class_name，role_name，查询role_type  *)
+Definition lookup_role_type
+  (M : object_model)
+  (c : class_name)
+  (r : role_name)
+  : option class_name :=
+  let fix aux (assocs : list assoc_name) : option class_name :=
+      match assocs with
+      | [] => None
+      | asso :: tl =>
+          match associates M asso, roles M asso with
+          | Some ap, Some rp =>
+              match lookup_role_type_in_assoc c r ap rp with
+              | Some t => Some t
+              | None   => aux tl
+              end
+          | _, _ => aux tl
+          end
+      end
+  in aux (ASSOC M).
+
+
+
+
+
+Definition lookup_assoc_of_role
+  (M : object_model)
+  (c : class_name)
+  (r : role_name)
+  : option assoc_name :=
+  let fix aux (as_list : list assoc_name) : option assoc_name :=
+    match as_list with
+    | [] => None
+    | asso :: tl =>
+        match associates M asso, roles M asso with
+        | Some ap, Some rp =>
+            match lookup_role_type_in_assoc c r ap rp with
+            | Some _ => Some asso
+            | None   => aux tl
+            end
+        | _, _ => aux tl
+        end
+    end
+  in aux (ASSOC M).
+
+
 
 
 
