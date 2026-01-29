@@ -33,6 +33,10 @@ Definition groupkey := list string.
 
 (* === 小工具：投影 GK / GK_r，以及 GK 等值连接条件 === *)
 
+
+
+
+
   
 Definition proj_cols (cs : list ColName)
 : list RAProjItem :=
@@ -76,6 +80,18 @@ Definition last_col_ty (cols : list Column) : option T_ra :=
   | [] => None
   | c :: _ => Some (col_ty c)
   end.
+
+
+Definition rename_if_in
+  (l1 l2 : list var_name) : list var_name :=
+  map
+    (fun x =>
+       if existsb (String.eqb x) l1
+       then x ++ "_r"
+       else x)
+    l2.
+
+
 
 
 (* 求两个list var_name的交集（去重）, keep_left *)
@@ -215,14 +231,29 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
     | CBinop op t1 t2 =>
         match translate M E t1, translate M E t2 with
-        (* rex 与 rex *)
+        (* rex 与 rex
+            转换规则:
+            - 若t1为rex，t2为rex
+                - 转换为Rex的二元操作
+                - 一个标量不存在依赖变量，依赖变量列表为空
+                - 类型由OCLTyping中binop_type函数计算得到
+        *)
         | Some (Rex e1, [], te1), Some (Rex e2, [], te2) =>
             match binop_type op te1 te2 with 
             | Some te' =>
                 Some (Rex (RBinop op e1 e2), [], te')
             | _ => None
             end
-        (* rex 与 rel *)
+        (* rex 与 rel 
+            转换规则:
+            - 若t1为rex，t2为rel
+            - 若t1为rel，t2为rex
+                - 转换为Rel上的Project操作
+                    - 保留所有列
+                    - 将val_col列根据binop变换为新列
+                - 依赖变量列表与源rel一致
+                - 类型由OCLTyping中binop_type函数计算得到
+        *)
         | Some (Rex e1, [], te1), Some (Rel q2, vl2, te2) =>
             match binop_type op te1 te2 with 
             | Some te' =>
@@ -250,19 +281,52 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
             | _ => None
             end
 
-        (* rel 与 rel *)
+
+        (* rel 与 rel
+            转换规则:
+                - 若t1为rel，t2为rel
+                    - 转换为两个rel的rename+(join+project/cartesian+project)
+                    - 准换为两个rel的join+project操作
+                        - join条件为：所有相同依赖变量相等
+                        - 对join结果进行投影，投影出两个依赖变量列表的并集（去重），
+                            将val_col列根据binop变换为新列
+                    - 依赖变量列表为两个依赖变量列表的并集（去重）
+                    - 类型由OCLTyping中binop_type函数计算得到
+        *)
         (* join时将右表相同列重命名为带_r后缀 *)
         | Some (Rel q1, vl1, te1), Some (Rel q2, vl2, te2) =>
+            let recols := rename_if_in vl1 vl2 in
             let intercols := inter_var vl1 vl2 in
             let unioncols := union_var vl1 vl2 in 
+            let procols := proj_cols unioncols in
+            let nv := mkProj val_col (RBinop op (RCol val_col) (RCol val_col_r)) in
             match binop_type op te1 te2 with 
             | Some te' =>
-                let cond := mk_cols_join_cond intercols in
-                let procols := (proj_cols unioncols) [] in
-                let nv := mkProj val_col (RBinop op (RCol val_col) (RCol val_col_r)) in
-                RAProject procols (RAJoin cond q1 q2)
+                match intercols with 
+                (* 两个rel不存在相同依赖变量 *)
+                | [] => 
+                    let cart_res := RACartesian q1 (RAProject (proj_cols recols) q2) in
+                    Some (
+                            Rel (RAProject (List.app procols [nv]) cart_res),
+                            unioncols,
+                            te'
+                    )
 
+                (* 两个rel存在相同依赖变量 *)
+                | x :: xs => 
+                    match mk_cols_join_cond intercols with 
+                    | Some jcond =>
+                        let join_res := RAJoin jcond q1 (RAProject (proj_cols recols) q2) in
+                        
+                        Some (
+                            Rel (RAProject (List.app procols [nv]) join_res),
+                            unioncols,
+                            te'
+                        )
 
+                    | _ => None
+                    end
+                end
             | _ => None
             end
         | _, _ => None
