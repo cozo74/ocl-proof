@@ -4,6 +4,18 @@ Import ListNotations.
 Open Scope string_scope.
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 (*************************************************************)
 (*                    命名                         *)
 (*************************************************************)
@@ -520,8 +532,27 @@ Definition navigate_role
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 (*************************************************************)
-(*                   关系 Schema 定义                         *)
+(*        Relational Algebra 中的类型与Instance domain        *)
 (*************************************************************)
 
 (* 数据库列类型 *)
@@ -533,13 +564,13 @@ Inductive T_ra : Type :=
   | Tra_Object (C : class_name).   (* 对象标识符，指向类 C *)
 
 
+(* 数据库列值 *)
 Inductive I_ra : Type :=
   | Ira_Bool : bool -> I_ra
   | Ira_Int : Z -> I_ra
   | Ira_Real : R -> I_ra
   | Ira_String : string -> I_ra
   | Ira_Object : class_name -> oid -> I_ra. 
-
 
 
 
@@ -556,12 +587,50 @@ Definition I_ra_has_type (v : I_ra) (t : T_ra) : Prop :=
 
 
 
+Definition I_ra_type (v : I_ra) : T_ra :=
+  match v with
+  | Ira_Bool _    =>   Tra_Bool
+  | Ira_Int _     =>    Tra_Int
+  | Ira_Real _    =>   Tra_Real
+  | Ira_String _  => Tra_String
+  | Ira_Object c1 o => Tra_Object c1
+  end.
+
+
+
+Definition T_ra_eqb (t1 t2 : T_ra) : bool :=
+  match t1, t2 with
+  | Tra_Bool,   Tra_Bool   => true
+  | Tra_Int,    Tra_Int    => true
+  | Tra_Real,   Tra_Real   => true
+  | Tra_String, Tra_String => true
+  | Tra_Object c1, Tra_Object c2 =>
+      String.eqb c1 c2
+  | _, _ => false
+  end.
+
+
+(*************************************************************)
+(*                   关系 Schema 定义                         *)
+(*************************************************************)
+
+
+
+
+
 
 (* 数据库列 *)
 Record Column : Type := {
   col_name : string;
   col_ty   : T_ra
 }.
+
+
+
+Definition mkCol (name : string) (t : T_ra) : Column :=
+  {| col_name := name; col_ty := t |}.
+
+
 
 (* 数据库表 Schema *)
 Record TableSchema : Type := {
@@ -571,7 +640,6 @@ Record TableSchema : Type := {
 }.
 
 
-Definition Schema_data : Type := list TableSchema.
 
 
 
@@ -584,7 +652,7 @@ Definition wf_TableSchema (ts : TableSchema) : Prop :=
 
 
 (* Schema 良构：表名唯一 + 每张表列名唯一 *)
-Definition wf_Schema (sc : Schema_data) : Prop :=
+Definition wf_Schema (sc : list TableSchema) : Prop :=
   NoDup (map table_name sc) /\
   Forall wf_TableSchema sc.
 
@@ -592,10 +660,41 @@ Definition wf_Schema (sc : Schema_data) : Prop :=
 
 
 Record Schema : Type := {
-  sc_data : Schema_data;
+  sc_data : list TableSchema;
   sc_wf   : wf_Schema sc_data
 }.
 
+
+(* 辅助函数：从Schema 中查表” *)
+Fixpoint lookup_table (sc : list TableSchema) (tname : string) : option TableSchema :=
+  match sc with
+  | [] => None
+  | ts :: tl =>
+      if String.string_dec (table_name ts) tname then Some ts else lookup_table tl tname
+  end.
+
+
+
+
+Fixpoint lookup_column (cols : list Column) (cname : string)
+  : option Column :=
+  match cols with
+  | [] => None
+  | c :: tl =>
+      if String.string_dec (col_name c) cname
+      then Some c
+      else lookup_column tl cname
+  end.
+
+
+Definition lookup_table_column
+  (sc : Schema)
+  (tname cname : string)
+  : option Column :=
+  match lookup_table (sc_data sc) tname with
+  | None => None
+  | Some ts => lookup_column (table_cols ts) cname
+  end.
 
 
 
@@ -613,10 +712,6 @@ Definition RowData : Type := list (string * I_ra).
 
 
 
-Record DBInstance_data : Type := {
-  db_tables : string -> option (list RowData)
-}.
-
 
 
 (* 辅助函数：从 RowData 查列值 *)
@@ -627,13 +722,9 @@ Fixpoint lookup_row (cn : string) (r : RowData) : option I_ra :=
   end.
 
 
-(* 辅助函数：从Schema 中查表” *)
-Fixpoint lookup_table (sc : Schema_data) (tname : string) : option TableSchema :=
-  match sc with
-  | [] => None
-  | ts :: tl =>
-      if String.string_dec (table_name ts) tname then Some ts else lookup_table tl tname
-  end.
+
+
+
 
 
 (* 严格行（域精确等于表列集合） *)
@@ -662,17 +753,16 @@ Definition wf_TableInst (ts : TableSchema) (rows : list RowData) : Prop :=
 
 
 (* DBInstance 总 wf：域受 Schema 限制 + 每张表实例良构 *)
-Definition wf_DBInstance (sc : Schema_data) (db : DBInstance_data) : Prop :=
-  let tbl := db_tables db in
+Definition wf_DBInstance (sc : list TableSchema) (db : string -> option (list RowData)) : Prop :=
   (* 表有定义 -> schema 里确实存在该表 *)
   (forall tname rows,
-      tbl tname = Some rows ->
+      db tname = Some rows ->
       exists ts, lookup_table sc tname = Some ts)
   /\
   (* 对 schema 中每张表：若 db 有实例，则实例必须符合表结构 *)
   (forall tname ts rows,
       lookup_table sc tname = Some ts ->
-      tbl tname = Some rows ->
+      db tname = Some rows ->
       wf_TableInst ts rows).
 
 
@@ -680,7 +770,7 @@ Definition wf_DBInstance (sc : Schema_data) (db : DBInstance_data) : Prop :=
 
 
 Record DBInstance (SC : Schema) : Type := {
-  db_data : DBInstance_data;
+  db_data : string -> option (list RowData);
   db_wf   : wf_DBInstance (sc_data SC) db_data
 }.
 
@@ -723,7 +813,7 @@ Fixpoint lookup_col (cn : string) (cols : list Column) : option Column :=
   end.
 
 (* 在 schema 中按表名查找表 *)
-Fixpoint lookup_tableS (sc : Schema_data) (tname : string) : option TableSchema :=
+Fixpoint lookup_tableS (sc : list TableSchema) (tname : string) : option TableSchema :=
   match sc with
   | [] => None
   | ts :: tl =>
@@ -802,7 +892,7 @@ Definition AssocTable_no_extra_cols (M : object_model) (asso : assoc_name) (ts :
 - 对每个 asso ∈ ASSOC(M)：schema 里存在表名为 asso 的表，满足 AssocTable_ok
 - （可选）schema 中的每张表名要么是类名要么是关联名（不多余表）
 *)
-Definition EncSchema (M : object_model) (sc : Schema_data) : Prop :=
+Definition EncSchema (M : object_model) (sc : list TableSchema) : Prop :=
   (* 每个类都有对应表 *)
   (forall c,
       In c (CLASS M) ->
@@ -832,13 +922,16 @@ Definition EncSchemaW (M : object_model) (SC : Schema) : Prop :=
 
 
 
-  Definition ClassTable_ok_strong (M : object_model) (c : class_name) (ts : TableSchema) : Prop :=
+Definition ClassTable_ok_strong (M : object_model) (c : class_name) (ts : TableSchema) : Prop :=
   ClassTable_ok M c ts /\ ClassTable_no_extra_cols M c ts.
 
 Definition AssocTable_ok_strong (M : object_model) (asso : assoc_name) (ts : TableSchema) : Prop :=
   AssocTable_ok M asso ts /\ AssocTable_no_extra_cols M asso ts.
 
-Definition EncSchema_strong (M : object_model) (sc : Schema_data) : Prop :=
+
+
+
+Definition EncSchema_strong (M : object_model) (sc : list TableSchema) : Prop :=
   (* 每个类都有对应表（且列不多不少） *)
   (forall c,
       In c (CLASS M) ->
@@ -999,21 +1092,21 @@ Definition AssocTableInst_ok
 Definition EncDB
   (M : object_model)
   (SS : system_state M)
-  (sc : Schema_data)
-  (db : DBInstance_data) : Prop :=
+  (sc : list TableSchema)
+  (db : string -> option (list RowData)) : Prop :=
 
   (* 类表一致 *)
   (forall c ts rows,
       In c (CLASS M) ->
       lookup_table sc c = Some ts ->
-      db_tables db c = Some rows ->
+      db c = Some rows ->
       ClassTableInst_ok M SS c rows)
   /\
   (* 关联表一致 *)
   (forall asso ts rows,
       In asso (ASSOC M) ->
       lookup_table sc asso = Some ts ->
-      db_tables db asso = Some rows ->
+      db asso = Some rows ->
       AssocTableInst_ok M SS asso rows).
 
 
