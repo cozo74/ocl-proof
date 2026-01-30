@@ -232,6 +232,9 @@ Fixpoint cols_of_rel (TS : list TableSchema) (r : rel) : option (list Column) :=
       | _, _ => None
       end
 
+  | RADistinct rel =>
+      cols_of_rel TS rel 
+
 
   | RAAggregate gcols aggs r1 =>
       (* 这里需要你根据 aggop 规则写输出列；略同我之前给的骨架 *)

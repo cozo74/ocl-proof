@@ -98,7 +98,7 @@ Inductive rel : Type :=
 
   (* 投影 π *)
   | RAProject : list RAProjItem -> rel -> rel
-  (* 语义：对每一行计算新列并生成新 schema *)
+  (* 语义：对每一行计算新列并生成新 schema. 可实现重命名、列顺序调整、列之间一元二元操作 *)
 
   (* 笛卡尔积 *)
   | RACartesian : rel -> rel -> rel
@@ -114,7 +114,7 @@ Inductive rel : Type :=
   | RADiff   : rel -> rel -> rel
 
   (* 去重（可选，用于 IsUnique / 集合语义） *)
-  (* | RADistinct : rel -> rel *)
+  | RADistinct : rel -> rel
 
 
   (* 分组与聚合 γ *)

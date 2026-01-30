@@ -838,6 +838,18 @@ Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop 
 
 
 
+
+  | ER_Distinct :
+      forall (DB : DBInstance SC) (q : rel) 
+      (rows rows' : list RowData),
+        evalRelR SC DB q rows ->
+        remove_dup_rows rows = rows' ->
+        evalRelR SC DB (RADistinct q) rows'
+
+
+
+
+
   (* 聚合：RAAggregate  
     1. 先对输入表 rows 按 gcols 分组
     2. 每个分组生成一行：
