@@ -94,19 +94,25 @@ Fixpoint type_of_rex (in_cols : list Column) (e : rex) : option T_ra :=
       | Some t1, Some t2 => binop_type op t1 t2
       | _, _ => None
       end
+
+  | RSubquery rel c =>
+        match lookup_column in_cols c with
+        | Some col => Some (col_ty col)
+        | _ => None
+      end
   end.
 
 
 
 
-Fixpoint cols_of_proj (in_cols : list Column) (ps : list RAProjItem)
+Fixpoint cols_of_proj (in_cols : list Column) (ps : list (ColName * rex))
   : option (list Column) :=
   match ps with
   | [] => Some []
   | p :: tl =>
-      match type_of_rex in_cols (proj_expr p), cols_of_proj in_cols tl with
+      match type_of_rex in_cols (snd p), cols_of_proj in_cols tl with
       | Some ty, Some rest =>
-          Some ({| col_name := proj_name p; col_ty := ty |} :: rest)
+          Some ({| col_name := fst p; col_ty := ty |} :: rest)
       | _, _ => None
       end
   end.

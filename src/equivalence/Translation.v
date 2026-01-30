@@ -39,21 +39,15 @@ Definition groupkey := list string.
 
   
 Definition proj_cols (cs : list string)
-: list RAProjItem :=
-map
-  (fun c =>
-     {| proj_expr := RCol c
-      ; proj_name := c |})
-  cs.
+: list (ColName * rex) :=
+    map (fun c => (c, RCol c)) cs.
 
 
 
-Fixpoint proj_cols_r (CS : list string) : list RAProjItem :=
+Fixpoint proj_cols_r (CS : list string) : list (ColName * rex) :=
     match CS with
     | [] => []
-    | c :: cs =>
-        {| proj_expr := RCol c; proj_name := String.append c "_r" |}
-          :: proj_cols_r cs
+    | c :: cs => (String.append c "_r", RCol c) :: proj_cols_r cs
     end.
   
 
@@ -716,12 +710,17 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
         match translate M E tm with
         | Some (Rel rel, vl, Te_Bag th, dim_rel ) =>
             match vl, aggop_type aggop th with 
+            (* 无分组聚合，得到一个rex。当bag为空时，返回0 *)
+            | [], Some th' =>
+                Some (
+                    Rex (RSubquery rel val_col),
+                    [],
+                    Te_Single th',
+                    RAEmpty
+                )
 
-            | [], Some te' =>
-                None
-                (* 暂不支持无分组聚合，TODO *)
-
-            |  x :: xs, Some te' =>
+            (* 分组聚合，得到一个rel*)
+            |  x :: xs, Some th' =>
                 match aggop with
                 (* 聚合操作为size时，需要处理bag为空的情况，
                 rel中分组为空时不出现，需要结合dimension table和fact table使分组为空时出现size=0 *)
@@ -742,7 +741,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                     Some (
                         Rel (RAAggregate vl [(val_col, aggop, val_col)] rel),
                         vl,
-                        Te_Single te',
+                        Te_Single th',
                         dim_rel
                     )
                 end

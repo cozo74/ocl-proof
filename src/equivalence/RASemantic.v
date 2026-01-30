@@ -274,19 +274,17 @@ Definition row_merge (r1 r2 : RowData) : RowData :=
         List.app r1 r2.
 
 
-Definition project_schema (ps : list RAProjItem) : list ColName :=
-map proj_name ps.
 
 
 (* 
 一一对应地求值（核心约束）
 用 combine 构造结果行
 *)
-Inductive project_rowR (ps : list RAProjItem) (r : RowData) : RowData -> Prop :=
+Inductive project_rowR (ps : list (ColName * rex)) (r : RowData) : RowData -> Prop :=
 | ProjectRowR :
     forall vs,
-      Forall2 (fun p v => evalRexR r (proj_expr p) v) ps vs ->
-      project_rowR ps r (combine (map proj_name ps) vs).
+      Forall2 (fun p v => evalRexR r (snd p) v) ps vs ->
+      project_rowR ps r (combine (map fst ps) vs).
 
 
 
@@ -725,7 +723,7 @@ Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop 
     project_rowR 描述 r 在 ps 下的投影结果
   *)
   | ER_Project :
-      forall (DB : DBInstance SC) (ps : list RAProjItem) (q : rel)
+      forall (DB : DBInstance SC) (ps : list (ColName * rex)) (q : rel)
             (rows rows' : list RowData),
         evalRelR SC DB q rows ->
 
