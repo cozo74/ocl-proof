@@ -669,9 +669,9 @@ Definition val_col : ColName := "_val".
 Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop :=
 
 
-  | ER_Empty :
+  (* | ER_Empty :
       forall (DB : DBInstance SC),
-        evalRelR SC DB RAEmpty []
+        evalRelR SC DB RAEmpty [] *)
 
 
   | ER_BagLiteral :

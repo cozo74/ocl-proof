@@ -607,7 +607,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
     (*  Bag difference  *)
     (* 
         转换规则:
-        - 类似RAUnion，将RAUnion换为RADiff
+        - 类似RAUnion，将RAUnion换为RADiff（！！差操作时可能会丢失空bag的组）
     *)
     | CDifference t1 t2  =>
         match translate M E t1, translate M E t2 with
@@ -659,7 +659,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                         te1
                     )
 
-                    
+
                 (* 两个rel存在相同依赖变量 *)
                 | x :: xs => 
                     match mk_cols_join_cond intercols with
@@ -694,30 +694,76 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
 
 
+    (*  Bag type 有参operation： Bag 函数 。 可用select+size表示*)
+    (* 
+        转换规则:
+        - 转换为按照依赖变量列表进行分组聚合，对val_col列进行聚合（相同依赖变量的行对应的val_col的值组成一个bag）
+            - 若依赖变量列表为空，表示全局聚合，得到一个标量值？（TODO）
+            - 若依赖变量列表不为空，表示分组聚合，转换为一个RAAggregate操作
+        - 依赖变量列表与源rel一致
+        - 类型由OCLTyping中aggop_type函数计算得到
+    *)
+    | CAggregate op tm =>
+        match translate M E tm with
+        | Some (Rel rel, vl, Te_Bag th ) =>
+            match vl, aggop_type op th with 
 
-        
-    (* | CSelect t1 var t2 =>
-        match translate_rel M Gamma t1 with
-        | Some (qSet, GK) =>
-    
-            (* push scope: var ↦ qSet *)
-            let Gamma' := push_var var (qSet, GK) Gamma in
-    
-            match translate_rel M Gamma' t2 with
-            | Some (qBool, GK') =>
-    
-                (* 语义约束（设计不变式）：
-                   - qBool 与 qSet schema 相同
-                   - GK' = GK
-                   在翻译阶段不显式检查，作为不变式假设 *)
-    
-                Some (qBool, GK)
+            | [], Some te' =>
+                None
+                (* TODO *)
+
+            |  x :: xs, Some te' =>
+                Some (
+                    Rel (RAAggregate vl [(val_col, op, val_col)] rel),
+                    vl,
+                    Te_Single te'
+                )
+
+
+            | _, _ => None
+            end
+        | _ => None
+        end
+
+
+
+    (* ======================== iterator 表达式 ======================== *)
+ 
+    (*  Bag type 有参operation：Iterator。 可用select+size表示*)
+    (* 
+        转换规则:
+        - 转换为对
+            - 对t1求值得到rel1，将rel1作为变量var加入变量环境E作为E'
+            - 在变量环境E'下对t2求值得到rel2，类型为Te_Single (Th_Basic Tb_Bool)
+                rel2的var列为rel1中的val_col列，rel2中的val_col为得到的bool类型列
+            - 选择出val_col为true的行，投影出vl1的所有列，以及将var列投影为val_col列（！！此时会丢失空bag的组，聚合操作可能会受影响，TODO）
+        - 依赖变量列表与原rel一致
+        - 表达式的类型为原rel的类型
+    *)
+    | CSelect t1 var t2 =>
+        match translate M E t1 with
+        | Some (Rel rel1, vl1, Te_Bag th ) =>
+        (* 列形状为：(v1, v2, v3, val_col:th ), 行数为n *)
+            let E' := update E var (rel1, vl1, th) in 
+            match translate M E' t2 with
+            | Some (Rel rel2, vl2, Te_Single (Th_Basic Tb_Bool) ) =>
+            (* 列形状为：(v1, v2, v3, var:th, val_col:bool )。
+                行数也应该为n，select操作(要求t2为带v的表达式)对bag中逐元素迭代得到一个bool值，
+                即对rel1中每行进行操作得到一行，所以行数应该相同 *)
+                let cond := RBinop (B_Comp BEq) (RCol val_col) (RLit (Ira_Bool true)) in
+                let projcols := List.app (proj_cols vl1) [mkProj val_col (RCol var)] in
+                Some (
+                    Rel (RAProject projcols (RASelect cond rel2)),
+                    vl1,
+                    Te_Bag th
+                )
+
     
             | _ => None
             end
     
         | _ => None
-        end *)
+        end
     
 
 
@@ -727,41 +773,5 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
 
 
-    (*  bag 聚合  *)
 
-    (* 
-        设计约束：
-        对单集合的聚合（size / min / max / sum / avg）不产生数值表达式，而产生一行关系；
-        该结果只能用于布尔判断（如 =、>、<），不能参与算术运算。
-    *)
-    (* | EAggregate op t =>
-        match translate_rel M Gamma t with
-        | Some (qSet, GK) =>
-
-            (* 取最后一列作为聚合列 *)
-            match last_col (schema_of (umlToSchema M) qSet) with
-            | None => None
-            | Some v =>
-
-                (* =============================== *)
-                (* 统一：关系级聚合（不产生标量） *)
-                (* =============================== *)
-                let qAgg :=
-                RAAggregate
-                    GK
-                    [(agg_col_name op v, op, v)]
-                    qSet
-                in
-
-                Some (qAgg, GK)
-            end
-
-        | _ => None
-        end *)
-
-
-
-
-    | _ =>
-        None
     end.
