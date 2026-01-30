@@ -162,6 +162,44 @@ Definition aggop_type (op : aggop) (src_ty : T_h) : option T_h :=
 
 
 
+
+Definition T_b_eqb (t1 t2 : T_b) : bool :=
+  match t1, t2 with
+  | Tb_Bool,   Tb_Bool
+  | Tb_Int,    Tb_Int
+  | Tb_Real,   Tb_Real
+  | Tb_String, Tb_String => true
+  | _, _ => false
+  end.
+
+
+
+
+Definition T_h_eqb (t1 t2 : T_h) : bool :=
+  match t1, t2 with
+  | Th_Basic b1, Th_Basic b2 =>
+      T_b_eqb b1 b2
+  | Th_Object c1, Th_Object c2 =>
+      String.eqb c1 c2
+  | _, _ => false
+  end.
+
+
+
+
+Definition T_e_eqb (t1 t2 : T_e) : bool :=
+  match t1, t2 with
+  | Te_Single h1, Te_Single h2 =>
+      T_h_eqb h1 h2
+  | Te_Bag h1, Te_Bag h2 =>
+      T_h_eqb h1 h2
+  | _, _ => false
+  end.
+
+
+
+
+
 Definition context := partial_map T_h.
 
 
