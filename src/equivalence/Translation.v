@@ -189,13 +189,13 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
             | _ => None
             end
         (* rel *)
-        | Some (Rel q, vl, te) =>
+        | Some (Rel rel, vl, te) =>
             match unop_type op te with 
             | Some te' => 
                 let vcols := proj_cols vl in
                 let nv := mkProj val_col (RUnop op (RCol val_col)) in
                 Some (
-                    Rel (RAProject (List.app vcols [nv]) q),
+                    Rel (RAProject (List.app vcols [nv]) rel),
                     vl,
                     te'
                 )
@@ -240,13 +240,13 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 - 依赖变量列表与源rel一致
                 - 类型由OCLTyping中binop_type函数计算得到
         *)
-        | Some (Rex e1, [], te1), Some (Rel q2, vl2, te2) =>
+        | Some (Rex e1, [], te1), Some (Rel rel2, vl2, te2) =>
             match binop_type op te1 te2 with 
             | Some te' =>
                 let vcols := proj_cols vl2 in
                 let nv := mkProj val_col (RBinop op e1 (RCol val_col)) in
                 Some (
-                    Rel (RAProject (List.app vcols [nv]) q2),
+                    Rel (RAProject (List.app vcols [nv]) rel2),
                     vl2,
                     te'
                 )
@@ -254,13 +254,13 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
             end
 
         (* rel 与 rex *)
-        | Some (Rel q1, vl1, te1), Some (Rex e2, [], te2) =>
+        | Some (Rel rel1, vl1, te1), Some (Rex e2, [], te2) =>
             match binop_type op te1 te2 with 
             | Some te' =>
                 let vcols := proj_cols vl1 in
                 let nv := mkProj val_col (RBinop op (RCol val_col) e2) in
                 Some (
-                    Rel (RAProject (List.app vcols [nv]) q1),
+                    Rel (RAProject (List.app vcols [nv]) rel1),
                     vl1,
                     te'
                 )
@@ -280,8 +280,8 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 - 类型由OCLTyping中binop_type函数计算得到
         *)
         (* join时将右表相同列重命名为带_r后缀 *)
-        | Some (Rel q1, vl1, te1), Some (Rel q2, vl2, te2) =>
-            let recols := rename_if_in vl1 vl2 in
+        | Some (Rel rel1, vl1, te1), Some (Rel rel2, vl2, te2) =>
+            let projcols := List.app (proj_cols (rename_if_in vl1 vl2)) [mkProj val_col_r (RCol val_col)] in
             let intercols := inter_var vl1 vl2 in
             let unioncols := union_var vl1 vl2 in 
             let procols := proj_cols unioncols in
@@ -291,7 +291,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 match intercols with 
                 (* 两个rel不存在相同依赖变量 *)
                 | [] => 
-                    let cart_res := RACartesian q1 (RAProject (proj_cols recols) q2) in
+                    let cart_res := RACartesian rel1 (RAProject projcols rel2) in
                     Some (
                             Rel (RAProject (List.app procols [nv]) cart_res),
                             unioncols,
@@ -302,7 +302,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 | x :: xs => 
                     match mk_cols_join_cond intercols with 
                     | Some jcond =>
-                        let join_res := RAJoin jcond q1 (RAProject (proj_cols recols) q2) in
+                        let join_res := RAJoin jcond rel1 (RAProject projcols rel2) in
                         
                         Some (
                             Rel (RAProject (List.app procols [nv]) join_res),
@@ -352,14 +352,14 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
     *)
     | CAttr tm attr =>
         match translate M E tm with
-        | Some (Rel q, vl, Te_Single (Th_Object cn) ) =>
+        | Some (Rel rel, vl, Te_Single (Th_Object cn) ) =>
             match lookup_attr_type M cn attr with
             | Some tb =>
                 let jocnd := RBinop (B_Comp BEq)  (RCol val_col) (RCol oid_col) in
                 let vcol := mkProj val_col (RCol attr) in
                 let projcols := List.app (proj_cols vl) [vcol] in
                     Some (
-                        Rel (RAProject projcols (RAJoin jocnd q (RATable cn))),
+                        Rel (RAProject projcols (RAJoin jocnd rel (RATable cn))),
                         vl,
                         Te_Single (Th_Basic tb)
                     )
@@ -390,7 +390,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
     *)
     | CRole tm role =>
         match translate M E tm with
-        | Some (Rel q, vl, Te_Single (Th_Object cn) ) =>
+        | Some (Rel rel, vl, Te_Single (Th_Object cn) ) =>
             match lookup_role_type M cn role,
                 lookup_assoc_of_role M cn role,
                 lookup_nav_multiplicity M cn role with
@@ -399,7 +399,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 let vcol := mkProj val_col (RCol role) in
                 let projcols := List.app (proj_cols vl) [vcol] in
                     Some (
-                        Rel (RAProject projcols (RAJoin jocnd q (RATable asso))),
+                        Rel (RAProject projcols (RAJoin jocnd rel (RATable asso))),
                         vl,
                         Te_Single (Th_Object cn')
                     )
@@ -424,7 +424,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
     *)
     | CNRole tm nrole =>
         match translate M E tm with
-        | Some (Rel q, vl, Te_Single (Th_Object cn) ) =>
+        | Some (Rel rel, vl, Te_Single (Th_Object cn) ) =>
             match lookup_role_type M cn nrole,
                 lookup_assoc_of_role M cn nrole,
                 lookup_nav_multiplicity M cn nrole with
@@ -433,7 +433,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 let vcol := mkProj val_col (RCol nrole) in
                 let projcols := List.app (proj_cols vl) [vcol] in
                     Some (
-                        Rel (RAProject projcols (RAJoin jocnd q (RATable asso))),
+                        Rel (RAProject projcols (RAJoin jocnd rel (RATable asso))),
                         vl,
                         Te_Bag (Th_Object cn')
                     )
@@ -469,142 +469,225 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
     (*  Bag type 有参operation： Bag 集合运算  *)
     (*  Bag union  *)
+    (* 
+        转换规则:
+        - 若rel1，rel2都只有一列val_col列（即依赖变量列表为空）
+        - 若rel1依赖变量列表不为空，rel2只有一列val_col列
+        - 若rel1只有一列val_col列，rel2依赖变量列表不为空
+        - 若rel1，rel2都依赖变量列表不为空
+    *)
     | CUnion t1 t2 =>
-        match translate_rel M Gamma t1,
-            translate_rel M Gamma t2 with
-        | Some (q1, gk1), Some (q2, gk2) =>
+        match translate M E t1, translate M E t2 with
+        | Some (Rel rel1, vl1, te1), Some (Rel rel2, vl2, te2) =>
+            match vl1, vl2 with 
+            | [], [] => 
+            (* 
+                转换规则:
+                - 若rel1，rel2都只有一列val_col列（即依赖变量列表为空）
+                    - 转换为RAUnion操作
+                    - 依赖变量列表为空
+                    - 类型为te1 （ 若为有效的语句，te1=te2）
+            *)
+                Some (
+                    Rel (RAUnion rel1 rel2),
+                    [],
+                    te1
+                ) 
+            | x :: xs, [] => 
+            (* 
+                转换规则:
+                - 若rel1依赖变量列表不为空，rel2只有一列val_col列
+                    - 转换为规则如下
+                        - 投影出rel1除val_col外的所有列（即所有依赖变量列表列），并去重，作为rel1'
+                        - 将rel1'与rel2进行笛卡尔积作为rel2''（将rel2中所有元素依次分配给rel1中的每个bag）
+                        - 最后将rel1与rel2''进行RAUnion操作
+                    - 依赖变量列表为t1的依赖变量列表
+                    - 类型为te1 （ 若为有效的语句，te1=te2）
+            *)
+                let rel1' := RADistinct (RAProject (proj_cols vl1) rel1) in
+                let rel2'' := RACartesian rel1' rel2 in
+                Some (
+                    Rel (RAUnion rel1 rel2''),
+                    vl1,
+                    te1
+                )
 
-            match gk1, gk2 with
-            | [], [] =>
-                (* 情况 1：[] × [] *)
-                match last_col (schema_of (umlToSchema M) q1),
-                last_col (schema_of (umlToSchema M) q2) with
-                | Some v1, Some v2 =>
-                    Some
-                        ( RAUnion
-                            (RAProject [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1)
-                            (RAProject [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2)
-                        , [] )
-                | _, _ =>
-                    None
+
+
+
+            | [], x :: xs => 
+            (* 
+                转换规则:
+                - 若rel1只有一列val_col列，rel2依赖变量列表不为空
+                    - 转换为规则如下
+                        - 投影出rel2除val_col外的所有列（即所有依赖变量列表列），并去重，作为rel2'
+                        - 将rel1与rel2'进行笛卡尔积作为rel1''（将rel1中所有元素依次分配给rel2中的每个bag）
+                        - 最后将rel1''与rel2进行RAUnion操作
+                    - 依赖变量列表为t2的依赖变量列表
+                    - 类型为te1 （ 若为有效的语句，te1=te2）
+            *)
+                let rel2' := RADistinct (RAProject (proj_cols vl2) rel2) in
+                let rel1'' := RACartesian rel2' rel1 in
+                Some (
+                    Rel (RAUnion rel1'' rel2),
+                    vl2,
+                    te1
+                )
+
+
+            | x1 :: xs1, x2 :: xs2 => 
+            (* 
+                转换规则:
+                - 若rel1，rel2都依赖变量列表不为空
+                    - 转换为规则如下
+                        - 投影出rel1,rel2除val_col外的所有列（即所有依赖变量列表列），并去重，作为rel1',rel2'
+                        - 计算vl1与vl2交集
+                            - 若交集为空，表示不存在相同依赖变量
+                                - 将rel1与rel2'进行笛卡尔积作为rel1'', 将rel1'与rel2进行笛卡尔积作为rel2''
+                            - 若交集不为空，表示存在相同依赖变量，连接条件为相同依赖变量相等
+                                - 将相同列（相同依赖变量）重命名为带_r后缀
+                                - 将rel1与rel2'进行连接作为rel1'', 将rel1'与rel2进行连接作为rel2''
+                        - 最后使用project操作调整列顺寻，然后将rel1''与rel2''进行RAUnion操作
+                    - 依赖变量列表为两个依赖变量列表的并集（去重）
+                    - 类型为te1 （ 若为有效的语句，te1=te2）
+            *)
+                let rel1' := RADistinct (RAProject (proj_cols vl1) rel1) in
+                let rel2' := RADistinct (RAProject (proj_cols vl2) rel2) in
+                let intercols := inter_var vl1 vl2 in
+                let unioncols := union_var vl1 vl2 in 
+                match intercols with 
+                (* 两个rel不存在相同依赖变量 *)
+                | [] => 
+                    (* 列顺序乱了 *)
+                    let rel1'' := RACartesian rel1 rel2' in
+                    let rel2'' := RACartesian rel1' rel2 in 
+                    let projcols := List.app (proj_cols unioncols) [mkProj val_col_r (RCol val_col) ] in
+                    Some (
+                        (* 使用project调整列顺序 *)
+                        Rel (RAUnion (RAProject projcols rel1'') (RAProject projcols rel2'')),
+                        unioncols,
+                        te1
+                    )
+
+
+                (* 两个rel存在相同依赖变量 *)
+                | x :: xs => 
+                    match mk_cols_join_cond intercols with
+                    | Some jcond =>
+                        let rel1' := RADistinct (RAProject (proj_cols vl1) rel1) in
+                        let rel2' := RADistinct (RAProject (proj_cols vl2) rel2) in
+
+                        (* 对相同列进行重命名 *)
+                        let recols2 := rename_if_in vl1 vl2 in
+                        let recols1 := rename_if_in vl2 vl1 in
+                        let rel1'' := RAJoin jcond rel1 (RAProject (proj_cols recols2) rel2') in
+                        let rel2'' := RAJoin jcond (RAProject (proj_cols recols1) rel1') rel2 in
+                        (* 使用project调整输出顺序 *)
+                        let outcols := proj_cols (List.app unioncols [val_col]) in
+                        Some (
+                            Rel (RAUnion (RAProject outcols rel1'') (RAProject outcols rel2'')),
+                            unioncols,
+                            te1
+                        )
+
+                    | _ => None
+                    end
                 end
 
-            | [], GK =>
-            (* 情况 2：[] × GK *)
-                match last_col (schema_of (umlToSchema M) q1),
-                last_col (schema_of (umlToSchema M) q2) with
-                | Some v1, Some v2 =>
-                    let qGK := RAProject (proj_cols GK) q2 in
-                    let qS  := RAProject [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1 in
-                    let qLift := RACartesian qGK qS in
-                    let qG := RAProject (proj_cols (GK ++ [v2])) q2 in
-                    Some ( RAUnion qLift qG
-                        , GK )
-                | _, _ =>
-                    None
-                end
-            | GK, [] =>
-            (* 情况 3：GK × [] *)
-                match last_col (schema_of (umlToSchema M) q1),
-                last_col (schema_of (umlToSchema M) q2) with
-                | Some v1, Some v2 =>
-                    let qGK := RAProject (proj_cols GK) q1 in
-                    let qS  := RAProject [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2 in
-                    let qLift := RACartesian qGK qS in
-                    let qG := RAProject (proj_cols (GK ++ [v1])) q1 in
-                    Some ( RAUnion qG qLift
-                        , GK )
-                | _, _ =>
-                    None
-                end
-            | GK, _ =>
-            (* 情况 4：GK1 × GK2 *)
-                (* 假设 gk1 = gk2 *)
-                match last_col (schema_of (umlToSchema M) q1),
-                last_col (schema_of (umlToSchema M) q2) with
-                | Some v1, Some v2 =>
-                    Some
-                        ( RAUnion
-                            (RAProject (proj_cols (GK ++ [v1])) q1)
-                            (RAProject (proj_cols (GK ++ [v2])) q2)
-                        , GK )
-                | _, _ =>
-                    None
-                end
             end
+
         | _, _ => None
-        end 
+        end
+
+
 
 
 
 
     (*  Bag difference  *)
-    (* | CDifference t1 t2  =>
-        match translate_rel M Gamma t1,
-            translate_rel M Gamma t2 with
-        | Some (q1, gk1), Some (q2, gk2) =>
+    (* 
+        转换规则:
+        - 类似RAUnion，将RAUnion换为RADiff
+    *)
+    | CDifference t1 t2  =>
+        match translate M E t1, translate M E t2 with
+        | Some (Rel rel1, vl1, te1), Some (Rel rel2, vl2, te2) =>
+            match vl1, vl2 with 
+            | [], [] => 
+                Some (
+                    Rel (RADiff rel1 rel2),
+                    [],
+                    te1
+                ) 
 
-            match gk1, gk2 with
-            | [], [] =>
-                (* 情况 1：[] × [] *)
-                match last_col (schema_of (umlToSchema M) q1),
-                last_col (schema_of (umlToSchema M) q2) with
-                | Some v1, Some v2 =>
-                    Some
-                        ( RADiff
-                            (RAProject [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1)
-                            (RAProject [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2)
-                        , [] )
-                | _, _ =>
-                    None
+            | x :: xs, [] => 
+                let rel1' := RADistinct (RAProject (proj_cols vl1) rel1) in
+                let rel2'' := RACartesian rel1' rel2 in
+                Some (
+                    Rel (RADiff rel1 rel2''),
+                    vl1,
+                    te1
+                )
+
+
+            | [], x :: xs => 
+                let rel2' := RADistinct (RAProject (proj_cols vl2) rel2) in
+                let rel1'' := RACartesian rel2' rel1 in
+                Some (
+                    Rel (RADiff rel1'' rel2),
+                    vl2,
+                    te1
+                )
+
+
+            | x1 :: xs1, x2 :: xs2 => 
+                let rel1' := RADistinct (RAProject (proj_cols vl1) rel1) in
+                let rel2' := RADistinct (RAProject (proj_cols vl2) rel2) in
+                let intercols := inter_var vl1 vl2 in
+                let unioncols := union_var vl1 vl2 in 
+                match intercols with 
+                (* 两个rel不存在相同依赖变量 *)
+                | [] => 
+                    (* 列顺序乱了 *)
+                    let rel1'' := RACartesian rel1 rel2' in
+                    let rel2'' := RACartesian rel1' rel2 in 
+                    let projcols := List.app (proj_cols unioncols) [mkProj val_col_r (RCol val_col) ] in
+                    Some (
+                        (* 使用project调整列顺序 *)
+                        Rel (RADiff (RAProject projcols rel1'') (RAProject projcols rel2'')),
+                        unioncols,
+                        te1
+                    )
+
+                    
+                (* 两个rel存在相同依赖变量 *)
+                | x :: xs => 
+                    match mk_cols_join_cond intercols with
+                    | Some jcond =>
+                        let rel1' := RADistinct (RAProject (proj_cols vl1) rel1) in
+                        let rel2' := RADistinct (RAProject (proj_cols vl2) rel2) in
+
+                        (* 对相同列进行重命名 *)
+                        let recols2 := rename_if_in vl1 vl2 in
+                        let recols1 := rename_if_in vl2 vl1 in
+                        let rel1'' := RAJoin jcond rel1 (RAProject (proj_cols recols2) rel2') in
+                        let rel2'' := RAJoin jcond (RAProject (proj_cols recols1) rel1') rel2 in
+                        (* 使用project调整输出顺序 *)
+                        let outcols := proj_cols (List.app unioncols [val_col]) in
+                        Some (
+                            Rel (RADiff (RAProject outcols rel1'') (RAProject outcols rel2'')),
+                            unioncols,
+                            te1
+                        )
+
+                    | _ => None
+                    end
                 end
 
-            | [], GK =>
-            (* 情况 2：[] × GK *)
-                match last_col (schema_of (umlToSchema M) q1),
-                last_col (schema_of (umlToSchema M) q2) with
-                | Some v1, Some v2 =>
-                    let qGK := RAProject (proj_cols GK) q2 in
-                    let qS  := RAProject [ {| proj_expr := RCol v1; proj_name := v1 |} ] q1 in
-                    let qLift := RACartesian qGK qS in
-                    let qG := RAProject (proj_cols (GK ++ [v2])) q2 in
-                    Some ( RADiff qLift qG
-                        , GK )
-                | _, _ =>
-                    None
-                end
-            | GK, [] =>
-            (* 情况 3：GK × [] *)
-                match last_col (schema_of (umlToSchema M) q1),
-                last_col (schema_of (umlToSchema M) q2) with
-                | Some v1, Some v2 =>
-                    let qGK := RAProject (proj_cols GK) q1 in
-                    let qS  := RAProject [ {| proj_expr := RCol v2; proj_name := v2 |} ] q2 in
-                    let qLift := RACartesian qGK qS in
-                    let qG := RAProject (proj_cols (GK ++ [v1])) q1 in
-                    Some ( RADiff qG qLift
-                        , GK )
-                | _, _ =>
-                    None
-                end
-            | GK, _ =>
-            (* 情况 4：GK1 × GK2 *)
-                (* 假设 gk1 = gk2 *)
-                match last_col (schema_of (umlToSchema M) q1),
-                last_col (schema_of (umlToSchema M) q2) with
-                | Some v1, Some v2 =>
-                    Some
-                        ( RADiff
-                            (RAProject (proj_cols (GK ++ [v1])) q1)
-                            (RAProject (proj_cols (GK ++ [v2])) q2)
-                        , GK )
-                | _, _ =>
-                    None
-                end
             end
-        | _, _ => None
-        end *)
 
+        | _, _ => None
+        end
 
 
 
