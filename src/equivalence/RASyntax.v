@@ -82,7 +82,7 @@ Definition projCol (c : ColName) : RAProjItem :=
 Inductive rel : Type :=
 
   (* 空关系 *)
-  (* | RAEmpty : rel *)
+  | RAEmpty : rel
 
   (* 常量关系 (single bag) *)
   | RABagLiteral : T_ra -> list I_ra -> rel
