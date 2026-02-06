@@ -5,8 +5,6 @@
 (*  Design principles:                                       *)
 (*  - RexNode: row-level, pure, no DB access                 *)
 (*  - ra_rel  : relation-level, evaluated over DBInstance     *)
-(*  - No subQuery in syntax: all subqueries are eliminated   *)
-(*    by rewriting into joins / aggregates before semantics  *)
 (*                                                           *)
 (*************************************************************)
 
@@ -229,7 +227,7 @@ Definition binop_sem_ra (op : binop) (v1 v2 : I_ra) : option I_ra :=
      - total up to option failure
 *)
 
-Inductive evalRexR : RowData -> rex -> I_ra -> Prop :=
+(* Inductive evalRexR : RowData -> rex -> I_ra -> Prop :=
 
 | ER_Col :
     forall row cn v,
@@ -256,8 +254,27 @@ Inductive evalRexR : RowData -> rex -> I_ra -> Prop :=
       evalRexR row (RBinop op e1 e2) v
 
 
-.
+. *)
 
+
+
+(* Merge two rows (used by join).
+   Schema disjointness is guaranteed by typing. *)
+Definition row_merge (r1 r2 : RowData) : RowData :=
+        List.app r1 r2.
+
+
+
+
+
+(* 从RowData中提取列名集合 *)
+Definition row_cols (r : RowData) : list ColName :=
+  map fst r.
+
+(* 判断两个 RowData 是否没有共同的列名 *)
+Definition disjoint_cols (r1 r2 : RowData) : Prop :=
+  forall c,
+    ~ (In c (row_cols r1) /\ In c (row_cols r2)).
 
 
 
@@ -268,23 +285,6 @@ Inductive evalRexR : RowData -> rex -> I_ra -> Prop :=
 (*                  Row construction helpers                 *)
 (*************************************************************)
 
-(* Merge two rows (used by join).
-   Schema disjointness is guaranteed by typing. *)
-Definition row_merge (r1 r2 : RowData) : RowData :=
-        List.app r1 r2.
-
-
-
-
-(* 
-一一对应地求值（核心约束）
-用 combine 构造结果行
-*)
-Inductive project_rowR (ps : list (ColName * rex)) (r : RowData) : RowData -> Prop :=
-| ProjectRowR :
-    forall vs,
-      Forall2 (fun p v => evalRexR r (snd p) v) ps vs ->
-      project_rowR ps r (combine (map fst ps) vs).
 
 
 
@@ -357,10 +357,10 @@ Fixpoint remove_dup_rows (xs : list RowData) : list RowData :=
 
 
 (* 在 RowData中取出给定colname的列值*)
-Fixpoint lookup_col (c : ColName) (r : RowData) : option I_ra :=
+Fixpoint lookup_row_col (c : ColName) (r : RowData) : option I_ra :=
   match r with
   | [] => None
-  | (k,v) :: tl => if String.eqb k c then Some v else lookup_col c tl
+  | (k,v) :: tl => if String.eqb k c then Some v else lookup_row_col c tl
   end.
 
 
@@ -451,7 +451,7 @@ Fixpoint collect_col
   match grp with
   | [] => []
   | r :: rs =>
-      match lookup_col col r with
+      match lookup_row_col col r with
       | Some v => v :: collect_col rs col
       | None   => collect_col rs col
       end
@@ -486,30 +486,6 @@ Definition eval_agg
 
 
 
-(* 从RowData中提取列名集合 *)
-Definition row_cols (r : RowData) : list ColName :=
-  map fst r.
-
-(* 判断两个 RowData 是否没有共同的列名 *)
-Definition disjoint_cols (r1 r2 : RowData) : Prop :=
-  forall c,
-    ~ (In c (row_cols r1) /\ In c (row_cols r2)).
-
-
-
-(* 笛卡尔积中的行合并关系                                   *)
-(*  r' 是由 r1 与 r2 通过 row_merge 得到的行                 *)
-Inductive cartesian_rowR : RowData -> RowData -> RowData -> Prop :=
-| CartesianRow_intro :
-    forall r1 r2,
-      NoDup (row_cols r1) ->
-      NoDup (row_cols r2) ->
-      disjoint_cols r1 r2 ->
-      cartesian_rowR r1 r2 (row_merge r1 r2).
-
-
-
-
 
 
 
@@ -520,7 +496,7 @@ Fixpoint group_key (gcols : list ColName) (r : RowData)
   match gcols with
   | [] => Some []
   | c :: cs =>
-      match lookup_col c r, group_key cs r with
+      match lookup_row_col c r, group_key cs r with
       | Some v, Some vs => Some (v :: vs)
       | _, _ => None
       end
@@ -594,7 +570,7 @@ Definition take_group_cols
           match cs with
           | [] => Some []
           | c :: cs' =>
-              match lookup_col c r0, aux cs' with
+              match lookup_row_col c r0, aux cs' with
               | Some v, Some rest => Some ((c, v) :: rest)
               | _, _ => None
               end
@@ -652,7 +628,11 @@ Fixpoint build_group_rows
 
 
 
-
+Definition scalar_extract (cn : ColName) (rows : list RowData) : option I_ra :=
+  match rows with
+  | [r] => lookup_row cn r
+  | _   => None
+  end.
 
 
 
@@ -664,168 +644,69 @@ Definition val_col : ColName := "_val".
 (*      Relational Algebra Big-step Semantics (Relation)     *)
 (*************************************************************)
 
-Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop :=
 
+
+
+(* 互递归：evalRelR <-> evalRexR
+   因为 RSubquery 里需要 evalRelR。 *)
+Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop :=
 
   | ER_Empty :
       forall (DB : DBInstance SC),
         evalRelR SC DB RAEmpty []
 
-
   | ER_BagLiteral :
       forall (DB : DBInstance SC) (t : T_ra) (vl : list I_ra),
         evalRelR SC DB (RABagLiteral t vl)
           (map (fun v => [(val_col, v)]) vl)
-
-
-
-
-  (* 表扫描：RATable
-    如果数据库中存在表 t，其内容为 rows，
-    那么 RATable t 的求值结果就是 rows
-  *)
+          
   | ER_Table :
       forall (DB : DBInstance SC) (t : TableName) (rows : list RowData),
-        (db_data SC DB ) t = Some rows ->
+        (db_data SC DB) t = Some rows ->
         evalRelR SC DB (RATable t) rows
 
-
-
-
-  (* 选择：RASelect
-    rows' 恰好是 rows 中所有满足：
-      - cond 在该行上可成功求值
-      - 且结果为 true
-    的行组成的表
-  *)
+  (* 选择：用生成关系 select_rowsR *)
   | ER_Select :
-      forall (DB : DBInstance SC) (cond : rex) (rrel : rel)
-           (rows rows' : list RowData),
-        evalRelR SC DB rrel rows ->
+      forall (DB : DBInstance SC) (cond : rex) (q : rel)
+            (rows rows' : list RowData),
+        evalRelR SC DB q rows ->
+        select_rowsR SC DB cond rows rows' ->
+        evalRelR SC DB (RASelect cond q) rows'
 
-        (* 1) rows' ⊆ rows *)
-        (forall r, In r rows' -> In r rows) ->
-
-        (* 2) rows' 中每行都满足 cond=true *)
-        (forall r, In r rows' -> evalRexR r cond (Ira_Bool true)) ->
-
-        (* 3) rows 中所有满足 cond=true 的行都被保留到 rows' *)
-        (forall r, In r rows -> evalRexR r cond (Ira_Bool true) -> In r rows') ->
-
-        evalRelR SC DB (RASelect cond rrel) rows'
-
-
-
-
-  (* 投影：RAProject
-    对输入表中的每一行 r
-    根据投影列表 ps 构造一行 r'
-    project_rowR 描述 r 在 ps 下的投影结果
-  *)
+  (* 投影：用生成关系 project_rowsR *)
   | ER_Project :
       forall (DB : DBInstance SC) (ps : list (ColName * rex)) (q : rel)
             (rows rows' : list RowData),
         evalRelR SC DB q rows ->
-
-        (* 每一个输入行 r 都能投影成某个输出行 r'，且 r' 在 rows' 中 *)
-        (forall r,
-          In r rows ->
-          exists r',
-            project_rowR ps r r' /\ In r' rows') ->
-
-        (* 每一个输出行 r' 都来自某个输入行的投影 *)
-        (forall r',
-          In r' rows' ->
-          exists r,
-            In r rows /\ project_rowR ps r r') ->
-
+        Forall2 (project_rowR SC DB ps) rows rows' ->
         evalRelR SC DB (RAProject ps q) rows'
 
-
-
-
-
-
-  (* 笛卡尔积：RACartesian
-    对输入表 rows1 与 rows2，输出所有 r1++r2
-    cartesian_rowR 描述 (r1,r2) 生成输出行 r'
-  *)
+  (* 笛卡尔积：用生成关系 cartesian_rowsR *)
   | ER_Cartesian :
       forall (DB : DBInstance SC) (q1 q2 : rel)
             (rows1 rows2 rows' : list RowData),
         evalRelR SC DB q1 rows1 ->
         evalRelR SC DB q2 rows2 ->
-
-        (* 每一个输入对 (r1,r2) 都能生成某个输出行 r'，且 r' 在 rows' 中 *)
-        (forall r1 r2,
-          In r1 rows1 ->
-          In r2 rows2 ->
-          exists r',
-            cartesian_rowR r1 r2 r' /\
-            In r' rows') ->
-
-        (* 每一个输出行 r' 都来自某个输入对 (r1,r2) *)
-        (forall r',
-          In r' rows' ->
-          exists r1 r2,
-            In r1 rows1 /\
-            In r2 rows2 /\
-            cartesian_rowR r1 r2 r') ->
-
+        cartesian_rowsR SC DB rows1 rows2 rows' ->
         evalRelR SC DB (RACartesian q1 q2) rows'
 
-
-
-
-  (* 连接：RAJoin
-    rows' 恰好是：
-      - 从 rows1 × rows2 中
-      - 合并行 row_merge r1 r2
-      - 且 join 条件在合并行上求值为 true
-    得到的所有结果行
-  *)
+  (* join：最干净的组织方式：join = select cond (cartesian q1 q2) *)
   | ER_Join :
       forall (DB : DBInstance SC) (cond : rex) (q1 q2 : rel)
-            (rows1 rows2 rows' : list RowData),
+            (rows1 rows2 rowsCart rows' : list RowData),
         evalRelR SC DB q1 rows1 ->
         evalRelR SC DB q2 rows2 ->
-
-        (* rows' 中的每一行都来自合法的 join，且条件为 true *)
-        (forall r,
-          In r rows' ->
-          exists r1 r2,
-            In r1 rows1 /\
-            In r2 rows2 /\
-            r = row_merge r1 r2 /\
-            evalRexR r cond (Ira_Bool true)) ->
-
-        (* 所有满足 join 条件的合并行都出现在 rows' 中 *)
-        (forall r1 r2,
-          In r1 rows1 ->
-          In r2 rows2 ->
-          evalRexR (row_merge r1 r2) cond (Ira_Bool true) ->
-          In (row_merge r1 r2) rows') ->
-
+        cartesian_rowsR SC DB rows1 rows2 rowsCart ->
+        select_rowsR SC DB cond rowsCart rows' ->
         evalRelR SC DB (RAJoin cond q1 q2) rows'
-
-
-
-
-  (* 并：RAUnion
-    Bag 语义：直接连接两个结果表
-  *)
 
   | ER_Union :
       forall (DB : DBInstance SC) (q1 q2 : rel)
             (rows1 rows2 : list RowData),
         evalRelR SC DB q1 rows1 ->
         evalRelR SC DB q2 rows2 ->
-        evalRelR SC DB (RAUnion q1 q2) (List.app rows1 rows2)
+        evalRelR SC DB (RAUnion q1 q2) (rows1 ++ rows2)
 
-
-  (* 差：RADiff
-    使用 bag 差集语义
-  *)
   | ER_Diff :
       forall (DB : DBInstance SC) (q1 q2 : rel)
             (rows1 rows2 rows' : list RowData),
@@ -834,33 +715,13 @@ Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop 
         bag_diff_rows rows1 rows2 = rows' ->
         evalRelR SC DB (RADiff q1 q2) rows'
 
-
-
-
   | ER_Distinct :
-      forall (DB : DBInstance SC) (q : rel) 
-      (rows rows' : list RowData),
+      forall (DB : DBInstance SC) (q : rel)
+            (rows rows' : list RowData),
         evalRelR SC DB q rows ->
         remove_dup_rows rows = rows' ->
         evalRelR SC DB (RADistinct q) rows'
 
-
-
-
-
-  (* 聚合：RAAggregate  
-    1. 先对输入表 rows 按 gcols 分组
-    2. 每个分组生成一行：
-      - group by 列直接取 key
-      - 聚合列由 eval_agg 计算
-  *)
-
-  (* Invariant:
-    - RAAggregate always produces one row per group
-    - group_by [] rows = [rows]
-    - Aggregate results are set-like (no duplicates)
-    - Aggregated relations are only compared, not used in arithmetic
-  *)
   | ER_Aggregate :
       forall (DB : DBInstance SC)
             (gcols : list ColName)
@@ -873,10 +734,284 @@ Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop 
         evalRelR SC DB (RAAggregate gcols aggs q) rows'
 
 
-.
+
+  with evalRexR ( SC: Schema) : DBInstance SC -> RowData -> rex -> I_ra -> Prop :=
+    | ER_Col :
+        forall (DB : DBInstance SC) row cn v,
+          lookup_row cn row = Some v ->
+          evalRexR SC DB row (RCol cn) v
+
+    | ER_Val :
+        forall (DB : DBInstance SC) row v,
+          evalRexR SC DB row (RLit v) v
+
+    | ER_Unop :
+        forall (DB : DBInstance SC) row op e1 v1 v,
+          evalRexR SC DB row e1 v1 ->
+          unop_sem_ra op v1 = Some v ->
+          evalRexR SC DB row (RUnop op e1) v
+
+    | ER_Binop :
+        forall (DB : DBInstance SC) row op e1 e2 v1 v2 v,
+          evalRexR SC DB row e1 v1 ->
+          evalRexR SC DB row e2 v2 ->
+          binop_sem_ra op v1 v2 = Some v ->
+          evalRexR SC DB row (RBinop op e1 e2) v
+
+    | ER_Subquery :
+        forall (DB : DBInstance SC) row (q : rel) (cn : ColName) rows v,
+          evalRelR SC DB q rows ->
+          scalar_extract cn rows = Some v ->
+          evalRexR SC DB row (RSubquery q cn) v
 
 
 
+    (* --------------------------------------------------------- *)
+    (* 2) 行->行：投影一行 / 合并两行                             *)
+    (* --------------------------------------------------------- *)
+
+    with project_rowR ( SC: Schema) : DBInstance SC -> list (ColName * rex) -> RowData -> RowData -> Prop :=
+      | ProjectRowR :
+          forall (DB : DBInstance SC) (ps : list (ColName * rex)) (r : RowData) (vs : list I_ra),
+            (* 建议加 NoDup，避免同名列导致 lookup_row 歧义 *)
+            NoDup (map fst ps) ->
+            Forall2 (fun p v => evalRexR SC DB r (snd p) v) ps vs ->
+            project_rowR SC DB ps r (combine (map fst ps) vs)
+
+    with cartesian_rowR ( SC: Schema) : DBInstance SC -> RowData -> RowData -> RowData -> Prop :=
+      | CartesianRow_intro :
+          forall (DB : DBInstance SC) r1 r2,
+            NoDup (row_cols r1) ->
+            NoDup (row_cols r2) ->
+            disjoint_cols r1 r2 ->
+            cartesian_rowR SC DB r1 r2 (row_merge r1 r2)
+
+    (* --------------------------------------------------------- *)
+    (* 3) 列表级生成关系：select/project/cartesian                 *)
+    (* --------------------------------------------------------- *)
+
+    with select_rowsR ( SC: Schema) : DBInstance SC -> rex -> list RowData -> list RowData -> Prop :=
+      | SR_nil :
+          forall (DB : DBInstance SC) cond,
+            select_rowsR SC DB cond [] []
+      | SR_keep :
+          forall (DB : DBInstance SC) cond r rs rs',
+            evalRexR SC DB r cond (Ira_Bool true) ->
+            select_rowsR SC DB cond rs rs' ->
+            select_rowsR SC DB cond (r :: rs) (r :: rs')
+      | SR_drop_false :
+          forall (DB : DBInstance SC) cond r rs rs',
+            evalRexR SC DB r cond (Ira_Bool false) ->
+            select_rowsR SC DB cond rs rs' ->
+            select_rowsR SC DB cond (r :: rs) rs'
+
+
+    with cartesian_rowsR ( SC: Schema) : DBInstance SC -> list RowData -> list RowData -> list RowData -> Prop :=
+      | CR_nil :
+          forall (DB : DBInstance SC) rows2,
+            cartesian_rowsR SC DB [] rows2 []
+      | CR_cons :
+          forall (DB : DBInstance SC) r1 rows1 rows2 out1 outRest,
+            (* out1 是 r1 与 rows2 的所有合并结果（以 list 形式生成） *)
+            cartesian_rows_oneR SC DB r1 rows2 out1 ->
+            cartesian_rowsR SC DB rows1 rows2 outRest ->
+            cartesian_rowsR SC DB (r1 :: rows1) rows2 (out1 ++ outRest)
+
+    with cartesian_rows_oneR ( SC: Schema) : DBInstance SC -> RowData -> list RowData -> list RowData -> Prop :=
+      | CRO_nil :
+          forall (DB : DBInstance SC) r1,
+            cartesian_rows_oneR SC DB r1 [] []
+      | CRO_cons :
+          forall (DB : DBInstance SC) r1 r2 rs2 r' outRest,
+            cartesian_rowR SC DB r1 r2 r' ->
+            cartesian_rows_oneR SC DB r1 rs2 outRest ->
+            cartesian_rows_oneR SC DB r1 (r2 :: rs2) (r' :: outRest)
+    .
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(* 函数方式定义的RA语义 *)
+
+Fixpoint select_rowsF
+  (evalRex : RowData -> rex -> option I_ra)
+  (cond : rex) (rows : list RowData)
+  : option (list RowData) :=
+  match rows with
+  | [] => Some []
+  | r :: rs =>
+      match evalRex r cond, select_rowsF evalRex cond rs with
+      | Some (Ira_Bool true),  Some out => Some (r :: out)
+      | Some (Ira_Bool false), Some out => Some out
+      | _, _ => None
+      end
+  end.
+
+Fixpoint eval_proj_valsF
+  (evalRex : RowData -> rex -> option I_ra)
+  (r : RowData) (ps : list (ColName * rex))
+  : option (list I_ra) :=
+  match ps with
+  | [] => Some []
+  | (_, e) :: tl =>
+      match evalRex r e, eval_proj_valsF evalRex r tl with
+      | Some v, Some vs => Some (v :: vs)
+      | _, _ => None
+      end
+  end.
+
+Definition project_rowF
+  (evalRex : RowData -> rex -> option I_ra)
+  (ps : list (ColName * rex)) (r : RowData)
+  : option RowData :=
+  match eval_proj_valsF evalRex r ps with
+  | Some vs => Some (combine (map fst ps) vs)
+  | None => None
+  end.
+
+Fixpoint project_rowsF
+  (evalRex : RowData -> rex -> option I_ra)
+  (ps : list (ColName * rex)) (rows : list RowData)
+  : option (list RowData) :=
+  match rows with
+  | [] => Some []
+  | r :: rs =>
+      match project_rowF evalRex ps r, project_rowsF evalRex ps rs with
+      | Some r', Some out => Some (r' :: out)
+      | _, _ => None
+      end
+  end.
+
+Fixpoint cartesian_rowsF (rows1 rows2 : list RowData) : list RowData :=
+  match rows1 with
+  | [] => []
+  | r1 :: tl =>
+      (map (fun r2 => row_merge r1 r2) rows2) ++ cartesian_rowsF tl rows2
+  end.
+
+
+
+
+Fixpoint evalRelF
+  (SC : Schema) (DB : DBInstance SC) (q : rel)
+  : option (list RowData) :=
+  match q with
+  | RAEmpty =>
+      Some []
+
+  | RABagLiteral t vl =>
+      Some (map (fun v => [(val_col, v)]) vl)
+
+  | RATable t =>
+      db_data SC DB t
+
+  | RASelect cond q1 =>
+      match evalRelF SC DB q1 with
+      | Some rows =>
+          select_rowsF (fun r e => evalRexF SC DB r e) cond rows
+      | None => None
+      end
+
+  | RAProject ps q1 =>
+      match evalRelF SC DB q1 with
+      | Some rows =>
+          project_rowsF (fun r e => evalRexF SC DB r e) ps rows
+      | None => None
+      end
+
+  | RACartesian q1 q2 =>
+      match evalRelF SC DB q1, evalRelF SC DB q2 with
+      | Some rows1, Some rows2 => Some (cartesian_rowsF rows1 rows2)
+      | _, _ => None
+      end
+
+  | RAJoin cond q1 q2 =>
+      match evalRelF SC DB q1, evalRelF SC DB q2 with
+      | Some rows1, Some rows2 =>
+          select_rowsF (fun r e => evalRexF SC DB r e) cond
+            (cartesian_rowsF rows1 rows2)
+      | _, _ => None
+      end
+
+  | RAUnion q1 q2 =>
+      match evalRelF SC DB q1, evalRelF SC DB q2 with
+      | Some rows1, Some rows2 => Some (List.app rows1 rows2)
+      | _, _ => None
+      end
+
+  | RADiff q1 q2 =>
+      match evalRelF SC DB q1, evalRelF SC DB q2 with
+      | Some rows1, Some rows2 => Some (bag_diff_rows rows1 rows2)
+      | _, _ => None
+      end
+
+  | RADistinct q1 =>
+      match evalRelF SC DB q1 with
+      | Some rows => Some (remove_dup_rows rows)
+      | None => None
+      end
+
+  | RAAggregate gcols aggs q1 =>
+      match evalRelF SC DB q1 with
+      | Some rows =>
+          let groups := group_by_rows gcols rows in
+          build_group_rows gcols aggs groups
+      | None => None
+      end
+  end
+
+with evalRexF
+  (SC : Schema) (DB : DBInstance SC) (row : RowData) (e : rex)
+  : option I_ra :=
+  match e with
+  | RCol cn =>
+      lookup_row cn row
+
+  | RLit v =>
+      Some v
+
+  | RUnop op e1 =>
+      match evalRexF SC DB row e1 with
+      | Some v1 => unop_sem_ra op v1
+      | None => None
+      end
+
+  | RBinop op e1 e2 =>
+      match evalRexF SC DB row e1, evalRexF SC DB row e2 with
+      | Some v1, Some v2 => binop_sem_ra op v1 v2
+      | _, _ => None
+      end
+
+  | RSubquery q cn =>
+      match evalRelF SC DB q with
+      | Some rows => scalar_extract cn rows
+      | None => None
+      end
+  end.
+
+
+
+
+
+Lemma evalRelF_det :
+  forall SC (DB : DBInstance SC) q rows1 rows2,
+    evalRelF SC DB q = Some rows1 ->
+    evalRelF SC DB q = Some rows2 ->
+    rows1 = rows2.
+Proof. intros; congruence. Qed.
 
 
 
