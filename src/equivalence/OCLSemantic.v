@@ -454,6 +454,203 @@ Definition mk_var_b (ih : I_h) (deps : list dep) : var_b :=
 
 
 
+Definition option_bind {A B} (oa : option A) (k : A -> option B) : option B :=
+  match oa with
+  | Some a => k a
+  | None => None
+  end.
+
+
+
+
+
+Fixpoint selectF
+  (M : object_model)
+  (SS : system_state M)
+  (eval : env -> tm -> option val_b)
+  (E : env)
+  (var : string)
+  (body : tm)
+  (Th : T_h)
+  (deps : list dep)
+  (xs : list I_h)
+  : option (list I_h) :=
+  match xs with
+  | [] => Some []
+  | ih :: tl =>
+      match eval (update E var (mk_var_b ih deps)) body with
+      | None => None
+      | Some vb =>
+          match val_val vb with
+          | Ie_Single (Ih_Basic (Ib_Bool true)) =>
+              option_map (fun out_tl => ih :: out_tl)
+                (selectF M SS eval E var body Th deps tl)
+          | Ie_Single (Ih_Basic (Ib_Bool false)) =>
+              selectF M SS eval E var body Th deps tl
+          | _ => None
+          end
+      end
+  end.
+
+
+
+(* --------- Select 的函数语义 --------- *)
+
+Fixpoint  cevalF
+  (M : object_model)
+  (SS : system_state M)
+  (E : env)
+  (t : tm)
+  : option val_b :=
+  match t with
+  | CVar x =>
+      match E x with
+      | Some vb =>
+          Some {|
+            val_val  := Ie_Single (var_val vb);
+            val_deps := (x, var_val vb) :: var_deps vb
+          |}
+      | None => None
+      end
+
+  | CLit v =>
+      Some {| val_val := Ie_Single (Ih_Basic v); val_deps := [] |}
+
+  | CUnop op t1 =>
+      option_bind (cevalF M SS E t1) (fun vb =>
+      option_bind (unop_sem op (val_val vb)) (fun v' =>
+        Some {| val_val := v'; val_deps := val_deps vb |}))
+
+  | CBinop op t1 t2 =>
+      option_bind (cevalF M SS E t1) (fun vb1 =>
+      option_bind (cevalF M SS E t2) (fun vb2 =>
+      option_bind (binop_sem op (val_val vb1) (val_val vb2)) (fun v' =>
+        Some {| val_val := v';
+                val_deps := dep_union (val_deps vb1) (val_deps vb2) |})))
+
+  | CAllInstances C =>
+      match (sigma_CLASS M SS) C with
+      | Some oids =>
+          Some {|
+            val_val  := Ie_Bag (Th_Object C) (map (fun oid => Ih_Object C oid) oids);
+            val_deps := []
+          |}
+      | None => None
+      end
+
+  | CAttr t0 attr =>
+      option_bind (cevalF M SS E t0) (fun vb =>
+      match val_val vb with
+      | Ie_Single (Ih_Object C oid) =>
+          match (sigma_ATT M SS) C oid attr with
+          | Some vb' =>
+              Some {| val_val := Ie_Single (Ih_Basic vb');
+                      val_deps := val_deps vb |}
+          | None => None
+          end
+      | _ => None
+      end)
+
+  | CRole t0 role =>
+      option_bind (cevalF M SS E t0) (fun vb =>
+      match val_val vb with
+      | Ie_Single (Ih_Object C oid) =>
+          match lookup_nav_multiplicity M C role with
+          | Some One =>
+              match navigate_role M SS C oid role with
+              | Some (C', [r_oid]) =>
+                  Some {| val_val := Ie_Single (Ih_Object C' r_oid);
+                          val_deps := val_deps vb |}
+              | _ => None
+              end
+          | _ => None
+          end
+      | _ => None
+      end)
+
+  | CNRole t0 nrole =>
+      option_bind (cevalF M SS E t0) (fun vb =>
+      match val_val vb with
+      | Ie_Single (Ih_Object C oid) =>
+          match lookup_nav_multiplicity M C nrole with
+          | Some Many =>
+              match navigate_role M SS C oid nrole with
+              | Some (C', oids) =>
+                  Some {| val_val := Ie_Bag (Th_Object C') (map (fun oid => Ih_Object C' oid) oids);
+                          val_deps := val_deps vb |}
+              | None => None
+              end
+          | _ => None
+          end
+      | _ => None
+      end)
+
+  | CBagLiteral Tb vs =>
+      Some {| val_val := Ie_Bag (Th_Basic Tb) (map (fun ib => Ih_Basic ib) vs);
+              val_deps := [] |}
+
+  | CUnion t1 t2 =>
+      option_bind (cevalF M SS E t1) (fun v1 =>
+      option_bind (cevalF M SS E t2) (fun v2 =>
+      match val_val v1, val_val v2 with
+      | Ie_Bag Th xs, Ie_Bag Th' ys =>
+          (* 你的关系语义要求同一个 Th；函数语义这里也保持一致 *)
+          if (* 你若有 Th_eqb/decEq，可在这里检查；没有就用 match+refl 约束 *)
+             true
+          then Some {| val_val := Ie_Bag Th (bag_union xs ys);
+                       val_deps := dep_union (val_deps v1) (val_deps v2) |}
+          else None
+      | _, _ => None
+      end))
+
+  | CDifference t1 t2 =>
+      option_bind (cevalF M SS E t1) (fun v1 =>
+      option_bind (cevalF M SS E t2) (fun v2 =>
+      match val_val v1, val_val v2 with
+      | Ie_Bag Th xs, Ie_Bag Th' ys =>
+          if true
+          then Some {| val_val := Ie_Bag Th (bag_difference xs ys);
+                       val_deps := dep_union (val_deps v1) (val_deps v2) |}
+          else None
+      | _, _ => None
+      end))
+
+  | CAggregate op t0 =>
+      option_bind (cevalF M SS E t0) (fun v =>
+      match val_val v with
+      | Ie_Bag Th xs =>
+          option_bind (aggop_sem op xs) (fun v' =>
+            Some {| val_val := v'; val_deps := val_deps v |})
+      | _ => None
+      end)
+
+
+
+  | CSelect t0 var body =>
+      option_bind (cevalF M SS E t0) (fun vb =>
+      match val_val vb with
+      | Ie_Bag Th xs =>
+          option_bind
+            (selectF M SS (fun E' t' => cevalF M SS E' t')
+               E var body Th (val_deps vb) xs)
+            (fun out =>
+               Some {| val_val := Ie_Bag Th out;
+                       val_deps := val_deps vb |})
+      | _ => None
+      end)
+
+
+
+  end.
+
+
+
+
+
+
+
+
+(* 
 Inductive cevalR (M : object_model) : system_state M -> env -> tm -> val_b -> Prop :=
 
 
@@ -708,7 +905,7 @@ Inductive cevalR (M : object_model) : system_state M -> env -> tm -> val_b -> Pr
                    val_deps := deps |}
 
               
-.
+. *)
 
 
 

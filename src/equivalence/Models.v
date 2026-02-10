@@ -854,13 +854,6 @@ Fixpoint lookup_col (cn : string) (cols : list Column) : option Column :=
       if String.string_dec (col_name c) cn then Some c else lookup_col cn tl
   end.
 
-(* 在 schema 中按表名查找表 *)
-Fixpoint lookup_tableS (sc : list TableSchema) (tname : string) : option TableSchema :=
-  match sc with
-  | [] => None
-  | ts :: tl =>
-      if String.string_dec (table_name ts) tname then Some ts else lookup_tableS tl tname
-  end.
 
 
 (* 
@@ -939,19 +932,19 @@ Definition EncSchema (M : object_model) (sc : list TableSchema) : Prop :=
   (forall c,
       In c (CLASS M) ->
       exists ts,
-        lookup_tableS sc c = Some ts /\
+        lookup_table sc c = Some ts /\
         ClassTable_ok M c ts)
   /\
   (* 每个关联都有对应表 *)
   (forall asso,
       In asso (ASSOC M) ->
       exists ts,
-        lookup_tableS sc asso = Some ts /\
+        lookup_table sc asso = Some ts /\
         AssocTable_ok M asso ts)
   /\
   (* 可选：schema 不包含额外表 *)
   (forall tname ts,
-      lookup_tableS sc tname = Some ts ->
+      lookup_table sc tname = Some ts ->
       In tname (CLASS M) \/ In tname (ASSOC M)).
 
 
@@ -978,19 +971,19 @@ Definition EncSchema_strong (M : object_model) (sc : list TableSchema) : Prop :=
   (forall c,
       In c (CLASS M) ->
       exists ts,
-        lookup_tableS sc c = Some ts /\
+        lookup_table sc c = Some ts /\
         ClassTable_ok_strong M c ts)
   /\
   (* 每个关联都有对应表（且列不多不少） *)
   (forall asso,
       In asso (ASSOC M) ->
       exists ts,
-        lookup_tableS sc asso = Some ts /\
+        lookup_table sc asso = Some ts /\
         AssocTable_ok_strong M asso ts)
   /\
   (* schema 不包含额外表 *)
   (forall tname ts,
-      lookup_tableS sc tname = Some ts ->
+      lookup_table sc tname = Some ts ->
       In tname (CLASS M) \/ In tname (ASSOC M)).
 
 

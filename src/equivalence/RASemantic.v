@@ -8,8 +8,8 @@
 (*                                                           *)
 (*************************************************************)
 
-From Stdlib Require Import String List ZArith Reals.
-
+From Stdlib Require Import String List ZArith Reals Bool.
+From Stdlib Require Import Program.Wf Arith Lia.
 Import ListNotations.
 Open Scope string_scope.
 
@@ -79,6 +79,7 @@ Definition comp_eq_sem_ra (v1 v2 : I_ra) : option bool :=
   | Ira_Int a, Ira_Real b      => Some (Reqb (IZR a) b)
   | Ira_Real a, Ira_Int b      => Some (Reqb a (IZR b))
   | Ira_Real a, Ira_Real b     => Some (Reqb a b)
+  | Ira_Bool a, Ira_Bool b => Some (Bool.eqb a b)
   | Ira_String a, Ira_String b => Some (String.eqb a b)
   | Ira_Object c1 d1, Ira_Object c2 d2 => Some (andb (String.eqb c1 c2) (String.eqb d1 d2))
   | _, _ => None
@@ -210,51 +211,6 @@ Definition binop_sem_ra (op : binop) (v1 v2 : I_ra) : option I_ra :=
 
 
 
-
-
-
-
-
-
-(*************************************************************)
-(*                 Row-level semantics                       *)
-(*                RexNode evaluation                         *)
-(*************************************************************)
-
-(* RexNode evaluation is:
-     - row-local
-     - pure
-     - total up to option failure
-*)
-
-(* Inductive evalRexR : RowData -> rex -> I_ra -> Prop :=
-
-| ER_Col :
-    forall row cn v,
-      lookup_row cn row = Some v ->
-      evalRexR row (RCol cn) v
-
-| ER_Val :
-    forall row v,
-      evalRexR row (RLit v) v
-
-| ER_Unop :
-    forall row op e1 v1 v,
-      evalRexR row e1 v1 ->
-      unop_sem_ra op v1 = Some v ->
-      evalRexR row (RUnop op e1) v
-
-
-
-| ER_Binop :
-    forall row op e1 e2 v1 v2 v,
-      evalRexR row e1 v1 ->
-      evalRexR row e2 v2 ->
-      binop_sem_ra op v1 v2 = Some v ->
-      evalRexR row (RBinop op e1 e2) v
-
-
-. *)
 
 
 
@@ -447,15 +403,16 @@ Definition aggop_ra_sem (op : aggop) (xs : list I_ra) : option I_ra :=
 Fixpoint collect_col
   (grp : list RowData)
   (col : ColName)
-  : list I_ra :=
+  : option (list I_ra) :=
   match grp with
-  | [] => []
+  | [] => Some []
   | r :: rs =>
-      match lookup_row_col col r with
-      | Some v => v :: collect_col rs col
-      | None   => collect_col rs col
+      match lookup_row_col col r, collect_col rs col with
+      | Some v, Some vs => Some (v :: vs)
+      | _, _ => None
       end
   end.
+
 
 
 (* 
@@ -468,16 +425,13 @@ Definition eval_agg
   (c    : ColName)
   (aggs : list (ColName * aggop * ColName))
   : option I_ra :=
-  match find
-          (fun '(newc, _, _) => String.eqb newc c)
-          aggs
-  with
-  | None =>
-      (* c is not an aggregated column *)
-      None
+  match find (fun '(newc, _, _) => String.eqb newc c) aggs with
+  | None => None
   | Some (_, op, srcCol) =>
-      (* apply aggregation operator to source column values *)
-      aggop_ra_sem op (collect_col grp srcCol)
+      match collect_col grp srcCol with
+      | Some xs => aggop_ra_sem op xs
+      | None => None
+      end
   end.
 
 
@@ -586,9 +540,12 @@ Fixpoint eval_aggs_cols
   match aggs with
   | [] => Some []
   | (newc, op, src) :: tl =>
-      match aggop_ra_sem op (collect_col grp src),
-            eval_aggs_cols grp tl with
-      | Some v, Some rest => Some ((newc, v) :: rest)
+      match collect_col grp src, eval_aggs_cols grp tl with
+      | Some xs, Some rest =>
+          match aggop_ra_sem op xs with
+          | Some v => Some ((newc, v) :: rest)
+          | None => None
+          end
       | _, _ => None
       end
   end.
@@ -646,7 +603,7 @@ Definition val_col : ColName := "_val".
 
 
 
-
+(* 
 (* 互递归：evalRelR <-> evalRexR
    因为 RSubquery 里需要 evalRelR。 *)
 Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop :=
@@ -728,6 +685,8 @@ Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop 
             (aggs  : list (ColName * aggop * ColName))
             (q : rel) (rows : list RowData)
             (groups : list (list RowData)) (rows' : list RowData),
+        gcols <> [] ->
+        aggs  <> [] ->
         evalRelR SC DB q rows ->
         groups = group_by_rows gcols rows ->
         build_group_rows gcols aggs groups = Some rows' ->
@@ -759,10 +718,13 @@ Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop 
           evalRexR SC DB row (RBinop op e1 e2) v
 
     | ER_Subquery :
-        forall (DB : DBInstance SC) row (q : rel) (cn : ColName) rows v,
+        forall (DB : DBInstance SC) row
+              (agg : ColName * aggop) (q : rel)
+              rows xs v,
           evalRelR SC DB q rows ->
-          scalar_extract cn rows = Some v ->
-          evalRexR SC DB row (RSubquery q cn) v
+          collect_col rows (fst agg) = Some xs ->
+          aggop_ra_sem (snd agg) xs = Some v ->
+          evalRexR SC DB row (RSubquery agg q) v
 
 
 
@@ -827,7 +789,7 @@ Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop 
             cartesian_rows_oneR SC DB r1 rs2 outRest ->
             cartesian_rows_oneR SC DB r1 (r2 :: rs2) (r' :: outRest)
     .
-
+ *)
 
 
 
@@ -845,6 +807,20 @@ Inductive evalRelR ( SC: Schema) : DBInstance SC -> rel -> list RowData -> Prop 
 
 
 (* 函数方式定义的RA语义 *)
+
+
+Fixpoint nodup_stringb (xs : list string) : bool :=
+  match xs with
+  | [] => true
+  | x :: tl =>
+      negb (existsb (String.eqb x) tl)
+      && nodup_stringb tl
+  end.
+
+
+
+
+
 
 Fixpoint select_rowsF
   (evalRex : RowData -> rex -> option I_ra)
@@ -877,10 +853,13 @@ Definition project_rowF
   (evalRex : RowData -> rex -> option I_ra)
   (ps : list (ColName * rex)) (r : RowData)
   : option RowData :=
-  match eval_proj_valsF evalRex r ps with
-  | Some vs => Some (combine (map fst ps) vs)
-  | None => None
-  end.
+  if nodup_stringb (map fst ps)
+  then
+    match eval_proj_valsF evalRex r ps with
+    | Some vs => Some (combine (map fst ps) vs)
+    | None => None
+    end
+  else None.
 
 Fixpoint project_rowsF
   (evalRex : RowData -> rex -> option I_ra)
@@ -895,11 +874,65 @@ Fixpoint project_rowsF
       end
   end.
 
-Fixpoint cartesian_rowsF (rows1 rows2 : list RowData) : list RowData :=
+
+
+
+
+Fixpoint in_stringb (x : string) (xs : list string) : bool :=
+  match xs with
+  | [] => false
+  | y :: ys => if String.eqb x y then true else in_stringb x ys
+  end.
+
+Definition disjoint_cols_b (r1 r2 : RowData) : bool :=
+  negb (existsb (fun c => andb (in_stringb c (row_cols r1))
+                               (in_stringb c (row_cols r2)))
+                (row_cols r1)).
+
+  
+
+
+Definition cartesian_rowF (r1 r2 : RowData) : option RowData :=
+  if nodup_stringb (row_cols r1)
+  then if nodup_stringb (row_cols r2)
+       then if disjoint_cols_b r1 r2
+            then Some (row_merge r1 r2)
+            else None
+       else None
+  else None.
+
+
+
+
+Fixpoint option_map_list {A B : Type} (f : A -> option B) (xs : list A)
+  : option (list B) :=
+  match xs with
+  | [] => Some []
+  | x :: tl =>
+      match f x, option_map_list f tl with
+      | Some y, Some ys => Some (y :: ys)
+      | _, _ => None
+      end
+  end.
+
+Definition option_app {A : Type} (ox oy : option (list A)) : option (list A) :=
+  match ox, oy with
+  | Some xs, Some ys => Some (List.app xs ys)
+  | _, _ => None
+  end.
+
+
+Definition cartesian_rows_oneF (r1 : RowData) (rows2 : list RowData)
+  : option (list RowData) :=
+  option_map_list (fun r2 => cartesian_rowF r1 r2) rows2.
+
+Fixpoint cartesian_rowsF (rows1 rows2 : list RowData)
+  : option (list RowData) :=
   match rows1 with
-  | [] => []
+  | [] => Some []
   | r1 :: tl =>
-      (map (fun r2 => row_merge r1 r2) rows2) ++ cartesian_rowsF tl rows2
+      option_app (cartesian_rows_oneF r1 rows2)
+                 (cartesian_rowsF tl rows2)
   end.
 
 
@@ -934,17 +967,20 @@ Fixpoint evalRelF
 
   | RACartesian q1 q2 =>
       match evalRelF SC DB q1, evalRelF SC DB q2 with
-      | Some rows1, Some rows2 => Some (cartesian_rowsF rows1 rows2)
+      | Some rows1, Some rows2 => cartesian_rowsF rows1 rows2
       | _, _ => None
       end
 
   | RAJoin cond q1 q2 =>
       match evalRelF SC DB q1, evalRelF SC DB q2 with
       | Some rows1, Some rows2 =>
-          select_rowsF (fun r e => evalRexF SC DB r e) cond
-            (cartesian_rowsF rows1 rows2)
+          match cartesian_rowsF rows1 rows2 with
+          | Some rowsCart => select_rowsF (evalRexF SC DB) cond rowsCart
+          | None => None
+          end
       | _, _ => None
       end
+
 
   | RAUnion q1 q2 =>
       match evalRelF SC DB q1, evalRelF SC DB q2 with
@@ -965,53 +1001,566 @@ Fixpoint evalRelF
       end
 
   | RAAggregate gcols aggs q1 =>
-      match evalRelF SC DB q1 with
-      | Some rows =>
-          let groups := group_by_rows gcols rows in
-          build_group_rows gcols aggs groups
-      | None => None
+      match gcols with
+      | [] => None
+      | _ :: _ =>
+        match aggs with
+        | [] => None
+        | _ :: _ =>
+          match evalRelF SC DB q1 with
+          | Some rows =>
+              let groups := group_by_rows gcols rows in
+              build_group_rows gcols aggs groups
+          | None => None
+          end
+        end
       end
   end
 
-with evalRexF
-  (SC : Schema) (DB : DBInstance SC) (row : RowData) (e : rex)
-  : option I_ra :=
-  match e with
-  | RCol cn =>
-      lookup_row cn row
+  with evalRexF
+    (SC : Schema) (DB : DBInstance SC) (row : RowData) (e : rex)
+    : option I_ra :=
+    match e with
+    | RCol cn =>
+        lookup_row cn row
 
-  | RLit v =>
-      Some v
+    | RLit v =>
+        Some v
 
-  | RUnop op e1 =>
-      match evalRexF SC DB row e1 with
-      | Some v1 => unop_sem_ra op v1
-      | None => None
-      end
+    | RUnop op e1 =>
+        match evalRexF SC DB row e1 with
+        | Some v1 => unop_sem_ra op v1
+        | None => None
+        end
 
-  | RBinop op e1 e2 =>
-      match evalRexF SC DB row e1, evalRexF SC DB row e2 with
-      | Some v1, Some v2 => binop_sem_ra op v1 v2
-      | _, _ => None
-      end
+    | RBinop op e1 e2 =>
+        match evalRexF SC DB row e1, evalRexF SC DB row e2 with
+        | Some v1, Some v2 => binop_sem_ra op v1 v2
+        | _, _ => None
+        end
 
-  | RSubquery q cn =>
-      match evalRelF SC DB q with
-      | Some rows => scalar_extract cn rows
-      | None => None
-      end
-  end.
+    | RSubquery a q =>
+        match a with
+        | (cn, op) =>
+            match evalRelF SC DB q with
+            | Some rows =>
+                match collect_col rows cn with
+                | Some xs => aggop_ra_sem op xs
+                | None => None
+                end
+            | None => None
+            end
+        end
+    end.
 
 
 
 
 
-Lemma evalRelF_det :
+(* Lemma evalRelF_det :
   forall SC (DB : DBInstance SC) q rows1 rows2,
     evalRelF SC DB q = Some rows1 ->
     evalRelF SC DB q = Some rows2 ->
     rows1 = rows2.
-Proof. intros; congruence. Qed.
+Proof. intros; congruence. Qed. *)
 
+
+
+
+
+
+(* Lemma existsb_string_eqb_of_in :
+  forall (x : string) (xs : list string),
+    In x xs -> existsb (String.eqb x) xs = true.
+Proof.
+  intros x xs Hin.
+  induction xs as [|y ys IH]; cbn in *.
+  - contradiction.
+  - destruct Hin as [<- | Hin].
+    + (* x = y *)
+      rewrite String.eqb_refl. reflexivity.
+    + (* x in ys *)
+      destruct (String.eqb x y) eqn:Heq.
+      * reflexivity.
+      * apply IH. exact Hin.
+Qed. *)
+
+
+
+
+(* Lemma nodup_stringb_sound :
+  forall xs, nodup_stringb xs = true -> NoDup xs.
+Proof.
+  intros xs; induction xs as [|x tl IH]; cbn.
+  - intros. constructor.
+  - intro H.
+    apply andb_true_iff in H as [Hnotin Hnodup].
+    apply negb_true_iff in Hnotin.
+    constructor.
+    + (* ~ In x tl *)
+      intro Hin.
+      (* 用 existsb_exists 推出 existsb = true，矛盾 *)
+      assert (Hex : existsb (String.eqb x) tl = true).
+      { apply existsb_string_eqb_of_in. exact Hin. }
+      rewrite Hex in Hnotin. discriminate.
+    + (* NoDup tl *)
+      apply IH. exact Hnodup.
+Qed. *)
+
+
+
+
+
+
+(* 
+
+Lemma select_rowsF_sound_gen
+  (SC : Schema) (DB : DBInstance SC)
+  (evalRex : RowData -> rex -> option I_ra)
+  (cond : rex) (rows out : list RowData) :
+  (forall r e v, evalRex r e = Some v -> evalRexR SC DB r e v) ->
+  select_rowsF evalRex cond rows = Some out ->
+  select_rowsR SC DB cond rows out.
+Proof.
+  intros Hrex.
+  revert out.
+  induction rows as [|r rs IH]; intros out Hsel.
+  - simpl in Hsel. inversion Hsel; subst. constructor.
+  - simpl in Hsel.
+    destruct (evalRex r cond) as [v|] eqn:Hv; try discriminate.
+    destruct (select_rowsF evalRex cond rs) as [out'|] eqn:Hrec; try discriminate.
+    destruct v; try discriminate.
+    destruct b. inversion Hsel; subst; econstructor; eauto.
+    + inversion Hsel; subst.
+      econstructor.
+      * eapply (Hrex r cond (Ira_Bool false)); eauto.
+      * eapply IH; eauto.
+    + inversion Hsel; subst.
+      econstructor; destruct v; cbn in Hsel; try discriminate Hsel;
+      destruct b; cbn in Hsel; discriminate Hsel.
+Qed. *)
+
+
+
+
+(* ------------------------------------------------------------ *)
+(* 1) eval_proj_valsF 的 soundness（泛化 evalRex）              *)
+(* ------------------------------------------------------------ *)
+
+(* Lemma eval_proj_valsF_sound_gen
+  (SC : Schema) (DB : DBInstance SC)
+  (evalRex : RowData -> rex -> option I_ra)
+  (r : RowData) (ps : list (ColName * rex)) (vs : list I_ra) :
+  (forall r e v, evalRex r e = Some v -> evalRexR SC DB r e v) ->
+  eval_proj_valsF evalRex r ps = Some vs ->
+  Forall2 (fun p v => evalRexR SC DB r (snd p) v) ps vs.
+Proof.
+  intros Hrex.
+  revert vs.
+  induction ps as [|[cn e] tl IH]; intros vs Heq.
+  - simpl in Heq. inversion Heq; subst. constructor.
+  - simpl in Heq.
+    destruct (evalRex r e) as [v|] eqn:Hv; try discriminate.
+    destruct (eval_proj_valsF evalRex r tl) as [vs'|] eqn:Htl; try discriminate.
+    inversion Heq; subst.
+    constructor.
+    + (* head *)
+      eapply (Hrex r e v); eauto.
+    + (* tail *)
+      eapply IH; eauto.
+Qed. *)
+
+
+
+(* ------------------------------------------------------------ *)
+(* 2) project_rowF 的 soundness（泛化 evalRex）                 *)
+(* ------------------------------------------------------------ *)
+
+
+
+(* Lemma project_rowF_sound_gen
+  (SC : Schema) (DB : DBInstance SC)
+  (evalRex : RowData -> rex -> option I_ra)
+  (ps : list (ColName * rex)) (r r' : RowData) :
+  (forall r0 e v, evalRex r0 e = Some v -> evalRexR SC DB r0 e v) ->
+  project_rowF evalRex ps r = Some r' ->
+  project_rowR SC DB ps r r'.
+Proof.
+  intros Hrex Hf.
+  unfold project_rowF in Hf.
+  destruct (nodup_stringb (map fst ps)) eqn:Hnd; try discriminate.
+  destruct (eval_proj_valsF evalRex r ps) eqn:Hv; try discriminate.
+  inversion Hf; subst r'. clear Hf.
+
+  pose proof (nodup_stringb_sound (map fst ps) Hnd) as HNoDup.
+  pose proof (eval_proj_valsF_sound_gen SC DB evalRex r ps l Hrex Hv) as HForall2.
+
+  econstructor; eauto.
+Qed. *)
+
+
+
+(* ------------------------------------------------------------ *)
+(* 3) project_rowsF 的 soundness（泛化 evalRex）                *)
+(* ------------------------------------------------------------ *)
+
+(* Lemma project_rowsF_sound_gen
+  (SC : Schema) (DB : DBInstance SC)
+  (evalRex : RowData -> rex -> option I_ra)
+  (ps : list (ColName * rex))
+  (rows out : list RowData) :
+  (forall r e v, evalRex r e = Some v -> evalRexR SC DB r e v) ->
+  NoDup (map fst ps) ->
+  project_rowsF evalRex ps rows = Some out ->
+  Forall2 (project_rowR SC DB ps) rows out.
+Proof.
+  intros Hrex Hnodup.
+  revert out.
+  induction rows as [|r rs IH]; intros out Hrows.
+  - simpl in Hrows. inversion Hrows; subst. constructor.
+  - simpl in Hrows.
+    destruct (project_rowF evalRex ps r) as [r1|] eqn:Hr; try discriminate.
+    destruct (project_rowsF evalRex ps rs) as [out'|] eqn:Hrs; try discriminate.
+    inversion Hrows; subst.
+    constructor.
+    + eapply project_rowF_sound_gen; eauto.
+    + eapply IH; eauto.
+Qed. *)
+
+
+(* Lemma project_rowsF_sound_Forall2_gen
+  (SC : Schema) (DB : DBInstance SC)
+  (evalRex : RowData -> rex -> option I_ra)
+  (ps : list (ColName * rex))
+  (rows rows' : list RowData) :
+  (forall r e v, evalRex r e = Some v -> evalRexR SC DB r e v) ->
+  project_rowsF evalRex ps rows = Some rows' ->
+  Forall2 (project_rowR SC DB ps) rows rows'.
+Proof.
+  intros Hrex.
+  revert rows'.
+  induction rows as [|r rs IH]; intros rows' Hproj.
+  - simpl in Hproj. inversion Hproj; subst. constructor.
+  - simpl in Hproj.
+  (* goal: Forall2 (project_rowR SC DB ps) (r :: rs) rows' *)
+
+  destruct (project_rowF evalRex ps r) as [r'|] eqn:Hr; try discriminate.
+  destruct (project_rowsF evalRex ps rs) as [out|] eqn:Hrs; try discriminate.
+  inversion Hproj; subst.
+
+  constructor.
+  + (* 需要：project_rowR SC DB ps r r' *)
+    (* 这里用你应该有的单行 soundness 引理 *)
+    eapply project_rowF_sound_gen; eauto.
+  + (* 需要：Forall2 ... rs out *)
+    eapply IH; eauto.
+Qed. *)
+
+
+
+(* ---------- 1) in_stringb 与正确性 ---------- *)
+
+
+(* Lemma in_stringb_true_iff :
+  forall x xs, in_stringb x xs = true <-> In x xs.
+Proof.
+  intros x xs; induction xs as [|y ys IH]; cbn.
+  - split; intro H; try discriminate; contradiction.
+  - destruct (String.eqb x y) eqn:Heq.
+    + apply String.eqb_eq in Heq; subst.
+      split; intro; [left; reflexivity| reflexivity].
+    + split.
+      * intro H. right. apply IH. exact H.
+      * intro Hin. destruct Hin as [Hin|Hin].
+        { subst. rewrite String.eqb_refl in Heq. discriminate. }
+        apply IH. exact Hin.
+Qed.
+
+
+Lemma in_stringb_false_iff :
+  forall x xs, in_stringb x xs = false <-> ~ In x xs.
+Proof.
+  intros x xs.
+  rewrite <- in_stringb_true_iff.
+  destruct (in_stringb x xs); cbn; split; intro H; try discriminate; auto. 
+  contradiction.
+Qed. *)
+
+
+
+
+(* ---------- 2) NoDup 的 bool 判定 + sound ---------- *)
+
+
+
+
+(* Lemma disjoint_cols_b_sound :
+  forall r1 r2,
+    disjoint_cols_b r1 r2 = true ->
+    disjoint_cols r1 r2.
+Proof.
+  intros r1 r2 Hb c.
+  unfold disjoint_cols_b in Hb.
+  apply negb_true_iff in Hb.
+  unfold disjoint_cols.
+  intro Hboth.
+  destruct Hboth as [HIn1 HIn2].
+  (* 由 HIn1 得到 existsb 为 true，矛盾 *)
+  assert (Hex : existsb
+    (fun c0 : string =>
+       andb (in_stringb c0 (row_cols r1))
+            (in_stringb c0 (row_cols r2)))
+    (row_cols r1) = true).
+  {
+    apply existsb_exists.
+    exists c.
+    split; [exact HIn1|].
+    (* 证明 andb ... = true *)
+    apply andb_true_iff.
+    split.
+    - apply (proj2 (in_stringb_true_iff c (row_cols r1))). exact HIn1.
+    - apply (proj2 (in_stringb_true_iff c (row_cols r2))). exact HIn2.
+  }
+  rewrite Hex in Hb. discriminate.
+Qed. *)
+
+
+
+(* Lemma cartesian_rowF_sound :
+  forall SC (DB : DBInstance SC) r1 r2 r',
+    cartesian_rowF r1 r2 = Some r' ->
+    cartesian_rowR SC DB r1 r2 r'.
+Proof.
+  intros SC DB r1 r2 r' H.
+  unfold cartesian_rowF in H.
+  destruct (nodup_stringb (row_cols r1)) eqn:Hn1; try discriminate.
+  destruct (nodup_stringb (row_cols r2)) eqn:Hn2; try discriminate.
+  destruct (disjoint_cols_b r1 r2) eqn:Hd; try discriminate.
+  inversion H; subst r'. clear H.
+
+  (* 从 bool -> Prop *)
+  pose proof (nodup_stringb_sound _ Hn1) as Hnd1.
+  pose proof (nodup_stringb_sound _ Hn2) as Hnd2.
+  pose proof (disjoint_cols_b_sound r1 r2 Hd) as Hdisj.
+
+  (* 用 inductive 构造子 *)
+  constructor; auto.
+Qed. *)
+
+
+
+
+
+(* Lemma cartesian_rows_oneF_sound :
+  forall SC (DB : DBInstance SC) r1 rows2 out,
+    cartesian_rows_oneF r1 rows2 = Some out ->
+    cartesian_rows_oneR SC DB r1 rows2 out.
+Proof.
+  intros SC DB r1 rows2.
+  induction rows2 as [|r2 rs2 IH]; intros out H.
+  - cbn in H. inversion H; subst. constructor.
+  - cbn in H.
+    unfold cartesian_rows_oneF in H; cbn in H.
+    (* option_map_list 展开 *)
+    cbn in H.
+    destruct (cartesian_rowF r1 r2) eqn:Hrow; try discriminate.
+    destruct (option_map_list (fun r => cartesian_rowF r1 r) rs2) eqn:Hrec; try discriminate.
+    inversion H; subst out. clear H.
+    econstructor.
+    + eapply cartesian_rowF_sound; eauto.
+    + (* 递归 *)
+      (* 注意：IH 需要输入 out0 *)
+      eapply IH; eauto.
+Qed. *)
+
+(* Lemma cartesian_rowsF_sound :
+  forall SC (DB : DBInstance SC) rows1 rows2 out,
+    cartesian_rowsF rows1 rows2 = Some out ->
+    cartesian_rowsR SC DB rows1 rows2 out.
+Proof.
+  intros SC DB rows1.
+  induction rows1 as [|r1 tl IH]; intros rows2 out H.
+  - cbn in H. inversion H; subst. constructor.
+  - cbn in H.
+    (* option_app 分析 *)
+    unfold option_app in H.
+    destruct (cartesian_rows_oneF r1 rows2) eqn:Hone; try discriminate.
+    destruct (cartesian_rowsF tl rows2) eqn:Hrest; try discriminate.
+    inversion H; subst out. clear H.
+    econstructor.
+    + eapply cartesian_rows_oneF_sound; eauto.
+    + eapply IH; eauto.
+Qed. *)
+
+
+
+
+
+
+
+
+
+
+
+(* 
+
+Lemma evalRelF_sound :
+  forall SC (DB:DBInstance SC) q rows,
+    evalRelF SC DB q = Some rows ->
+    evalRelR SC DB q rows
+with evalRexF_sound :
+  forall SC (DB:DBInstance SC) row e v,
+    evalRexF SC DB row e = Some v ->
+    evalRexR SC DB row e v.
+Proof.
+  (* ======================= evalRelF_sound ======================= *)
+    - intros SC DB q rows Heq.
+    revert rows Heq.
+    induction q; intros rows Heq; cbn in Heq.
+    + (* RAEmpty *)
+      inversion Heq; subst. constructor.
+    + (* RABagLiteral *)
+      inversion Heq; subst. constructor.
+    + (* RATable *)
+      (* evalRelF = db_data SC DB t *)
+      econstructor. exact Heq.
+
+    + (* RASelect cond q *)
+      destruct (evalRelF SC DB q) eqn:Hq; try discriminate.
+      assert (HqR : evalRelR SC DB q l).
+      { apply IHq. reflexivity. }
+      assert (HselR : select_rowsR SC DB r l rows).
+      {
+        eapply (select_rowsF_sound_gen
+                  SC DB
+                  (fun rw e => evalRexF SC DB rw e)
+                  r l rows).
+        - intros rw e v Hv. eapply evalRexF_sound; eauto.
+        - exact Heq.
+      }
+      eapply ER_Select; eauto.
+
+    + (* RAProject ps q *)
+      destruct (evalRelF SC DB q) eqn:Hq; try discriminate.
+      assert (HqR : evalRelR SC DB q l0).
+      { apply IHq. reflexivity. }
+      assert (Hproj : Forall2 (project_rowR SC DB l) l0 rows).
+      {
+        eapply (project_rowsF_sound_Forall2_gen
+                  SC DB
+                  (fun rw e => evalRexF SC DB rw e)
+                  l l0 rows).
+        - intros rw e v Hv. eapply evalRexF_sound; eauto.
+        - exact Heq.
+      }
+      eapply ER_Project; eauto.
+
+    + (* RACartesian q1 q2 *)
+      destruct (evalRelF SC DB q1) eqn:H1; try discriminate.
+      destruct (evalRelF SC DB q2) eqn:H2; try discriminate.
+      assert (Hq1R : evalRelR SC DB q1 l).
+      { apply IHq1. reflexivity. }
+      assert (Hq2R : evalRelR SC DB q2 l0).
+      { apply IHq2. reflexivity. }
+      assert (Hcart : cartesian_rowsR SC DB l l0 rows).
+      { eapply cartesian_rowsF_sound; eauto. }
+      (* 用构造子拼起来；避免隐式参数错位，用 @ 或 econstructor *)
+      econstructor; eauto.
+
+    + (* RAJoin cond q1 q2 *)
+      destruct (evalRelF SC DB q1) eqn:H1; try discriminate.
+      destruct (evalRelF SC DB q2) eqn:H2; try discriminate.
+      destruct (cartesian_rowsF l l0) eqn:Hcart; try discriminate.
+      assert (Hq1R : evalRelR SC DB q1 l).
+      { apply IHq1. reflexivity. }
+      assert (Hq2R : evalRelR SC DB q2 l0).
+      { apply IHq2. reflexivity. }
+      assert (HcartR : cartesian_rowsR SC DB l l0 l1).
+      { eapply cartesian_rowsF_sound; eauto. }
+      assert (HselR : select_rowsR SC DB r l1 rows).
+      {
+        eapply (select_rowsF_sound_gen
+                  SC DB
+                  (fun rw e => evalRexF SC DB rw e)
+                  r l1 rows).
+        - intros rw e v Hv. eapply evalRexF_sound; eauto.
+        - exact Heq.
+      }
+
+      eapply ER_Join; eauto.
+
+    + (* RAUnion q1 q2 *)
+      destruct (evalRelF SC DB q1) eqn:H1; try discriminate.
+      destruct (evalRelF SC DB q2) eqn:H2; try discriminate.
+      inversion Heq; subst rows.
+      eapply ER_Union; [eapply IHq1|eapply IHq2]; eauto.
+
+    + (* RADiff q1 q2 *)
+      destruct (evalRelF SC DB q1) eqn:H1; try discriminate.
+      destruct (evalRelF SC DB q2) eqn:H2; try discriminate.
+      inversion Heq; subst rows.
+      eapply ER_Diff; [eapply IHq1|eapply IHq2|]; eauto.
+
+    + (* RADistinct q *)
+      destruct (evalRelF SC DB q) eqn:Hq; try discriminate.
+      inversion Heq; subst rows.
+      eapply ER_Distinct; [eapply IHq|]; eauto.
+
+    + (* RAAggregate gcols aggs q *)
+      (* RAAggregate gcols aggs q *)
+      destruct l as [|c l']; cbn in Heq; try discriminate.
+      destruct l0 as [|a l0']; cbn in Heq; try discriminate.
+      destruct (evalRelF SC DB q) as [rows_q|] eqn:Hq; try discriminate.
+      assert (HqR : evalRelR SC DB q rows_q).
+      { apply (IHq rows_q). reflexivity. }
+
+      set (groups := group_by_rows (c :: l') rows_q).
+
+      eapply ER_Aggregate with (rows := rows_q) (groups := groups); eauto.
+      -- discriminate.
+      -- discriminate.
+
+
+
+
+
+  (* ======================= evalRexF_sound ======================= *)
+  - intros SC DB row e v Heq.
+    revert v Heq.
+    induction e; intros v Heq; cbn in Heq.
+    + (* RCol *)
+      econstructor. exact Heq.
+    + (* RLit *)
+      inversion Heq; subst. constructor.
+    + (* RUnop *)
+      destruct (evalRexF SC DB row e) eqn:He1; try discriminate.
+      assert (HeR : evalRexR SC DB row e i).
+      { apply IHe. reflexivity. }
+      (* 然后用一元运算的关系语义构造子 *)
+      eapply ER_Unop; eauto.
+
+    + (* RBinop *)
+      destruct (evalRexF SC DB row e1) eqn:H1; try discriminate.
+      destruct (evalRexF SC DB row e2) eqn:H2; try discriminate.
+      assert (He1R : evalRexR SC DB row e1 i).
+      { apply IHe1. reflexivity. }
+      assert (He2R : evalRexR SC DB row e2 i0).
+      { apply IHe2. reflexivity. }
+      eapply ER_Binop; eauto.
+    + (* RSubquery *)
+      cbn in Heq.
+      destruct p as [cn op]. cbn in Heq.
+      destruct (evalRelF SC DB r) as [rows|] eqn:Hr; try discriminate.
+      destruct (collect_col rows cn) as [xs|] eqn:Hcol; try discriminate.
+
+      (* 此时 Heq : aggop_ra_sem op xs = Some v *)
+      (* 先把子查询 r 的关系语义拿到 *)
+      pose proof (evalRelF_sound SC DB r rows Hr) as HrR.
+
+      (* 用 ER_Subquery 拼起来 *)
+      eapply ER_Subquery; eauto.
+
+
+Qed. *)
 
 

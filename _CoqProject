@@ -18,7 +18,8 @@ src/equivalence/RASyntax.v
 src/equivalence/RASemantic.v
 src/equivalence/RATyping.v
 
-# src/equivalence/Translation.v
+src/equivalence/Translation.v
+# src/equivalence/CorrectnessLemma.v
 
 src/equivalence/Utils.v
 

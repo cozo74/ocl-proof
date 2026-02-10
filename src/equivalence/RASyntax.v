@@ -97,7 +97,7 @@ Inductive rel : Type :=
     | RBinop : binop -> rex -> rex -> rex
 
 
-    | RSubquery : rel -> ColName -> rex .
+    | RSubquery : (ColName * aggop) -> rel -> rex .
 
 
 

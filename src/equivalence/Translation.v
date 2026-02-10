@@ -115,8 +115,26 @@ Inductive rex_or_rel : Type :=
 Definition tran_env := partial_map (rel * list var_name * T_h).
 
 
-Definition val_col := "_elem".
-Definition val_col_r := "_elem_r".
+(* Definition val_col := "_val". *)
+Definition val_col_r := "_val_r".
+
+
+Definition FreshVar (var : string) (vl : list string) : bool :=
+  negb (existsb (String.eqb var) vl) && negb (String.eqb var val_col).
+
+
+Fixpoint remove_string (a : string) (xs : list string) : list string :=
+  match xs with
+  | [] => []
+  | y :: ys =>
+      if String.eqb a y
+      then remove_string a ys
+      else y :: remove_string a ys
+  end.
+
+Definition in_stringb (x : string) (xs : list string) : bool :=
+  existsb (String.eqb x) xs.
+
 
 
 Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_rel * list var_name * T_e * rel) := 
@@ -132,7 +150,9 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
     *)
     | CVar x =>
         match E x with
-        | Some (rel, vl, th) =>  Some (Rel rel, List.app vl [x], Te_Single th, RAEmpty)
+        | Some (rel, vl, th) =>  
+            let projcols := List.app (proj_cols vl) (mkProj x (RCol val_col) :: mkProj val_col (RCol val_col) :: nil) in
+            Some (Rel (RAProject projcols rel), List.app vl [x], Te_Single th, RAEmpty)
         | None => None
         end
 
@@ -713,7 +733,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
             (* 无分组聚合，得到一个rex。当bag为空时，返回0 *)
             | [], Some th' =>
                 Some (
-                    Rex (RSubquery rel val_col),
+                    Rex (RSubquery (val_col, aggop) rel),
                     [],
                     Te_Single th',
                     RAEmpty
@@ -770,26 +790,30 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
         match translate M E t1 with
         | Some (Rel rel1, vl1, Te_Bag th, dim_rel ) =>
         (* 列形状为：(v1, v2, v3, val_col:th ), 行数为n *)
-            let E' := update E var (rel1, vl1, th) in 
-            match translate M E' t2 with
-            | Some (Rel rel2, vl2, Te_Single (Th_Basic Tb_Bool), RAEmpty ) =>
-            (* 列形状为：(v1, v2, v3, var:th, val_col:bool )。
-                行数也应该为n，select操作(要求t2为带v的表达式)对bag中逐元素迭代得到一个bool值，
-                即对rel1中每行进行操作得到一行，所以行数应该相同 *)
-                (* t2为select操作的body表达式，其值为一个bool类型值，不是bag，因此Dimension Table为空*)
-                let cond := RBinop (B_Comp BEq) (RCol val_col) (RLit (Ira_Bool true)) in
-                let projcols := List.app (proj_cols vl1) [mkProj val_col (RCol var)] in
-                Some (
-                    Rel (RAProject projcols (RASelect cond rel2)),
-                    vl1,
-                    Te_Bag th,
-                    dim_rel
-                )
+            if FreshVar var vl1 then
+                let E' := update E var (rel1, vl1, th) in 
+                match translate M E' t2 with
+                | Some (Rel rel2, vl2, Te_Single (Th_Basic Tb_Bool), RAEmpty ) =>
+                    if in_stringb var vl2 then
+                        (* 列形状为：(v1, v2, v3, var:th, val_col:bool )。
+                            行数也应该为n，select操作(要求t2为带v的表达式)对bag中逐元素迭代得到一个bool值，
+                            即对rel1中每行进行操作得到一行，所以行数应该相同 *)
+                            (* t2为select操作的body表达式，其值为一个bool类型值，不是bag，因此Dimension Table为空*)
+                            let cond := RBinop (B_Comp BEq) (RCol val_col) (RLit (Ira_Bool true)) in
+                            let vl1' := remove_string val_col vl1 in
+                            let projcols := List.app (proj_cols vl1') [mkProj val_col (RCol var)] in
+                            Some (
+                                Rel (RAProject projcols (RASelect cond rel2)),
+                                vl1',
+                                Te_Bag th,
+                                dim_rel
+                            )
+                    else None
+                | _ => None
+                end
 
-    
-            | _ => None
-            end
-    
+            else None
+
         | _ => None
         end
     

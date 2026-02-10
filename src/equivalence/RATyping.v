@@ -95,11 +95,14 @@ Fixpoint type_of_rex (in_cols : list Column) (e : rex) : option T_ra :=
       | _, _ => None
       end
 
-  | RSubquery rel c =>
-        match lookup_column in_cols c with
-        | Some col => Some (col_ty col)
-        | _ => None
-      end
+  | RSubquery a q =>
+        match a with
+        | (cn, op) =>
+            match lookup_column in_cols cn with
+            | Some col => Some (col_ty col)
+            | None => None
+            end
+        end
   end.
 
 
