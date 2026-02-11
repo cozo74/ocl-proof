@@ -796,18 +796,18 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 | Some (Rel rel2, vl2, Te_Single (Th_Basic Tb_Bool), RAEmpty ) =>
                     if in_stringb var vl2 then
                         (* 列形状为：(v1, v2, v3, var:th, val_col:bool )。
-                            行数也应该为n，select操作(要求t2为带v的表达式)对bag中逐元素迭代得到一个bool值，
-                            即对rel1中每行进行操作得到一行，所以行数应该相同 *)
-                            (* t2为select操作的body表达式，其值为一个bool类型值，不是bag，因此Dimension Table为空*)
-                            let cond := RBinop (B_Comp BEq) (RCol val_col) (RLit (Ira_Bool true)) in
-                            let vl1' := remove_string val_col vl1 in
-                            let projcols := List.app (proj_cols vl1') [mkProj val_col (RCol var)] in
-                            Some (
-                                Rel (RAProject projcols (RASelect cond rel2)),
-                                vl1',
-                                Te_Bag th,
-                                dim_rel
-                            )
+                        行数也应该为n，select操作(要求t2为带v的表达式)对bag中逐元素迭代得到一个bool值，
+                        即对rel1中每行进行操作得到一行，所以行数应该相同 *)
+                        (* t2为select操作的body表达式，其值为一个bool类型值，不是bag，因此Dimension Table为空*)
+                        let cond := RBinop (B_Comp BEq) (RCol val_col) (RLit (Ira_Bool true)) in
+                        let vl1' := remove_string val_col vl1 in
+                        let projcols := List.app (proj_cols vl1') [mkProj val_col (RCol var)] in
+                        Some (
+                            Rel (RAProject projcols (RASelect cond rel2)),
+                            vl1',
+                            Te_Bag th,
+                            dim_rel
+                        )
                     else None
                 | _ => None
                 end
