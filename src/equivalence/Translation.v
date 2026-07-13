@@ -119,7 +119,7 @@ Definition tran_env := partial_map (rel * list var_name * T_h).
 Definition val_col_r := "_val_r".
 
 
-Definition FreshVar (var : string) (vl : list string) : bool :=
+Definition unused_var (var : string) (vl : list string) : bool :=
   negb (existsb (String.eqb var) vl) && negb (String.eqb var val_col).
 
 
@@ -137,12 +137,45 @@ Definition in_stringb (x : string) (xs : list string) : bool :=
 
 
 
+Fixpoint occurs_var (x : string) (t : tm) : bool :=
+  match t with
+  | CVar y => String.eqb x y
+  | CLit _ => false
+  | CUnop _ t1 => occurs_var x t1
+  | CBinop _ t1 t2 => occurs_var x t1 || occurs_var x t2
+  | CAllInstances _ => false
+  | CAttr t1 _ => occurs_var x t1
+  | CRole t1 _ => occurs_var x t1
+  | CNRole t1 _ => occurs_var x t1
+  | CBagLiteral _ _ => false
+  | CUnion t1 t2 => occurs_var x t1 || occurs_var x t2
+  | CDifference t1 t2 => occurs_var x t1 || occurs_var x t2
+  | CAggregate _ t1 => occurs_var x t1
+  | CSelect t1 _ t2 => occurs_var x t1
+  end.
+
+
+
+Fixpoint list_string_eqb (xs ys : list string) : bool :=
+  match xs, ys with
+  | [], [] => true
+  | x::xs', y::ys' => String.eqb x y && list_string_eqb xs' ys'
+  | _, _ => false
+  end.
+
+
+
+
+
 Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_rel * list var_name * T_e * rel) := 
+(* 结果 * 依赖变量列表 * 类型 * bag的维度表 *)
+
     match t with
 
     
     (* ======================== Var 表达式 ======================== *)
-    (* 
+    (*  约束：
+            - 变量只能表示Object类型
         转换规则:
         - 从tran_env中查找变量x的替换rel
         - 将x加入rel的依赖变量中，表示当前表达式的取值依赖变量x
@@ -162,7 +195,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
     (* ======================== operation 表达式 ======================== *)
 
     (*  无参operation： 字面量构造器  *)
-    (* 
+    (*  
         转换规则:
         - 根据basic type字面量的值，创建对应的Rex，表示一个标量
         - 一个标量不存在依赖变量，依赖变量列表为空
@@ -222,7 +255,9 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
 
     (*  basic type 有参operation： 二元操作 (和object type eq)  *)
-    (* 
+    (*  约束：
+            - binop操作不能影响分组全集（即维度表）中列的值，特别用于约束rel和rel的情况
+            - 对于rel和rel的binop操作，要求两个rel的维度表相同（即两个rel的分组全集相同），以保证binop操作不会影响分组全集中列的值(或先不考虑rel和rel的情况)
         转换规则:
         - 若t1为rex，t2为rex
         - 若t1为rex，t2为rel
@@ -297,7 +332,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 - 类型由OCLTyping中binop_type函数计算得到
         *)
         (* join时将右表相同列重命名为带_r后缀 *)
-        | Some (Rel rel1, vl1, te1, RAEmpty), Some (Rel rel2, vl2, te2, RAEmpty) =>
+        (* | Some (Rel rel1, vl1, te1, RAEmpty), Some (Rel rel2, vl2, te2, RAEmpty) =>
             let projcols := List.app (proj_cols (rename_if_in vl1 vl2)) [mkProj val_col_r (RCol val_col)] in
             let intercols := inter_var vl1 vl2 in
             let unioncols := union_var vl1 vl2 in 
@@ -333,7 +368,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                     end
                 end
             | _ => None
-            end
+            end *)
         | _, _ => None
         end
 
@@ -363,6 +398,8 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
     (* 
         转换规则:
+        约束：
+            - 每个对象有且只有一个attr值（即attr的multiplicity为1）
         - 转换为 join+project
             - tm 成功转换为一个表示cn类型对象的 rel
             - 从 object model中成功查找到该类存在attr字段，表示对象表objTable存在、字段存在
@@ -402,6 +439,8 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
     (* 
         转换规则:
+        约束：
+            - 每个对象有且只有一个role值（即role的multiplicity为1）
         - 转换为 join+project
             - tm 成功转换为一个表示cn类型对象的 rel
             - 从 object model中成功查找到该类存在assoc关系和role字段，表示关系表assoTable存在、字段存在
@@ -417,15 +456,31 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 lookup_assoc_of_role M cn role,
                 lookup_nav_multiplicity M cn role with
             | Some cn', Some asso, Some One =>
-                let jocnd := RBinop (B_Comp BEq)  (RCol val_col) (RCol role) in
-                let vcol := mkProj val_col (RCol role) in
-                let projcols := List.app (proj_cols vl) [vcol] in
-                    Some (
-                        Rel (RAProject projcols (RAJoin jocnd rel (RATable asso))),
-                        vl,
-                        Te_Single (Th_Object cn'),
-                        RAEmpty
-                    )
+                match associates M asso, roles M asso with
+                | Some ap, Some rp =>
+                    if andb (String.eqb (c1 ap) cn) (String.eqb (r2 rp) role) then
+                        let jocnd := RBinop (B_Comp BEq) (RCol val_col) (RCol (r1 rp)) in
+                        let vcol := mkProj val_col (RCol role) in
+                        let projcols := List.app (proj_cols vl) [vcol] in
+                        Some (
+                            Rel (RAProject projcols (RAJoin jocnd rel (RATable asso))),
+                            vl,
+                            Te_Single (Th_Object cn'),
+                            RAEmpty
+                        )
+                    else if andb (String.eqb (c2 ap) cn) (String.eqb (r1 rp) role) then
+                        let jocnd := RBinop (B_Comp BEq) (RCol val_col) (RCol (r2 rp)) in
+                        let vcol := mkProj val_col (RCol role) in
+                        let projcols := List.app (proj_cols vl) [vcol] in
+                        Some (
+                            Rel (RAProject projcols (RAJoin jocnd rel (RATable asso))),
+                            vl,
+                            Te_Single (Th_Object cn'),
+                            RAEmpty
+                        )
+                    else None
+                | _, _ => None
+                end
             | _, _, _ => None
             end
         | _ => None
@@ -437,6 +492,8 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
     (* 
         转换规则:
+        约束：
+            - 每个对象至少存在一个nrole值（即nrole的multiplicity为many）
         - 转换为 join+project
             - tm 成功转换为一个表示cn类型对象的 rel
             - 从 object model中成功查找到该类存在assoc关系和role字段，表示关系表assoTable存在、字段存在
@@ -452,15 +509,31 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 lookup_assoc_of_role M cn nrole,
                 lookup_nav_multiplicity M cn nrole with
             | Some cn', Some asso, Some Many =>
-                let jocnd := RBinop (B_Comp BEq)  (RCol val_col) (RCol nrole) in
-                let vcol := mkProj val_col (RCol nrole) in
-                let projcols := List.app (proj_cols vl) [vcol] in
-                    Some (
-                        Rel (RAProject projcols (RAJoin jocnd rel (RATable asso))),
-                        vl,
-                        Te_Bag (Th_Object cn'),
-                        rel
-                    )
+                match associates M asso, roles M asso with
+                | Some ap, Some rp =>
+                    if andb (String.eqb (c1 ap) cn) (String.eqb (r2 rp) nrole) then
+                        let jocnd := RBinop (B_Comp BEq) (RCol val_col) (RCol (r1 rp)) in
+                        let vcol := mkProj val_col (RCol nrole) in
+                        let projcols := List.app (proj_cols vl) [vcol] in
+                        Some (
+                            Rel (RAProject projcols (RAJoin jocnd rel (RATable asso))),
+                            vl,
+                            Te_Bag (Th_Object cn'),
+                            rel
+                        )
+                    else if andb (String.eqb (c2 ap) cn) (String.eqb (r1 rp) nrole) then
+                        let jocnd := RBinop (B_Comp BEq) (RCol val_col) (RCol (r2 rp)) in
+                        let vcol := mkProj val_col (RCol nrole) in
+                        let projcols := List.app (proj_cols vl) [vcol] in
+                        Some (
+                            Rel (RAProject projcols (RAJoin jocnd rel (RATable asso))),
+                            vl,
+                            Te_Bag (Th_Object cn'),
+                            rel
+                        )
+                    else None
+                | _, _ => None
+                end
             | _, _, _ => None
             end
         | _ => None
@@ -470,7 +543,8 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
 
     (*  Bag type 有参operation： 字面量构造器 *)
-    (* 
+    (*  约束：
+            - 只能构造basic type的bag，不能构造object type的bag
         转换规则:
         - 转换为 一列多行的RABagLiteral
         - 依赖变量列表为空
@@ -494,14 +568,18 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
     (*  Bag type 有参operation： Bag 集合运算  *)
     (*  Bag union  *)
-    (* 
+    (*  约束：
+            - 两个bag中的基本类型必须相同
+            - union操作不能影响分组全集（即维度表）中列的值，特别用于约束rel和rel的情况
+            - 要求两个rel的维度表相同，实际应该是根据求值后的所有行相同，但翻译时， 只能根据维度表的rel表示来判断是否相同，而不是语义求值后的行结果相同，使得约束更加严格
+            - 对于rel和rel的union操作，要求两个rel的维度表相同（即两个rel的分组全集相同），可暂不考虑rel和rel的union操作，以后再考虑
         转换规则:
         - 若rel1，rel2都只有一列val_col列（即依赖变量列表为空）
         - 若rel1依赖变量列表不为空，rel2只有一列val_col列
         - 若rel1只有一列val_col列，rel2依赖变量列表不为空
         - 若rel1，rel2都依赖变量列表不为空
     *)
-    | CUnion t1 t2 =>
+    (* | CUnion t1 t2 =>
         match translate M E t1, translate M E t2 with
         | Some (Rel rel1, vl1, te1, dim_rel1), Some (Rel rel2, vl2, te2, dim_rel2) =>
             match vl1, vl2 with 
@@ -566,7 +644,7 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                 转换规则:
                 - 若rel1，rel2都依赖变量列表不为空
                     - 转换为规则如下
-                        - 投影出rel1,rel2除val_col外的所有列（即所有依赖变量列表列），并去重，作为rel1',rel2'
+                        - 投影出rel1,rel2除val_col外的所有列（即所有依赖变量列表列），并去重，作为rel1',rel2'，（维度表可直接取）
                         - 计算vl1与vl2交集
                             - 若交集为空，表示不存在相同依赖变量
                                 - 将rel1与rel2'进行笛卡尔积作为rel1'', 将rel1'与rel2进行笛卡尔积作为rel2''
@@ -617,11 +695,12 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                     | _ => None
                     end
                 end
-
+            | _, _ => None
             end
 
+
         | _, _ => None
-        end
+        end *)
 
 
 
@@ -629,11 +708,12 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
 
 
     (*  Bag difference  *)
-    (* 
+    (*  约束：
+            - 类似RAUnion
         转换规则:
         - 类似RAUnion，将RAUnion换为RADiff（！！差操作时可能会丢失空bag的组）
     *)
-    | CDifference t1 t2  =>
+    (* | CDifference t1 t2  =>
         match translate M E t1, translate M E t2 with
         | Some (Rel rel1, vl1, te1, dim_rel1), Some (Rel rel2, vl2, te2, dim_rel2) =>
             match vl1, vl2 with 
@@ -706,12 +786,12 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
                     | _ => None
                     end
                 end
-
+            | _, _ => None
             end
 
         | _, _ => None
         end
-
+ *)
 
 
 
@@ -777,6 +857,9 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
  
     (*  Bag type 有参operation：Iterator。 可用select+size表示*)
     (* 
+        约束：
+            - 只能对object类型的bag进行迭代，不能对basic type的bag进行迭代
+            - 迭代的rel求值得到的rows中不存在重复行(存在重复行时，展开一次集合再聚合回去重复行会合并成一行，导致结果不正确)
         转换规则:
         - 转换为对
             - 对t1求值得到rel1，将rel1作为变量var加入变量环境E作为E'
@@ -788,27 +871,31 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
     *)
     | CSelect t1 var t2 =>
         match translate M E t1 with
-        | Some (Rel rel1, vl1, Te_Bag th, dim_rel ) =>
+        | Some (Rel rel1, vl1, Te_Bag (Th_Object C), dim_rel ) =>
         (* 列形状为：(v1, v2, v3, val_col:th ), 行数为n *)
-            if FreshVar var vl1 then
-                let E' := update E var (rel1, vl1, th) in 
+            if unused_var var vl1 then
+                let E' := update E var (rel1, vl1, Th_Object C) in 
                 match translate M E' t2 with
                 | Some (Rel rel2, vl2, Te_Single (Th_Basic Tb_Bool), RAEmpty ) =>
-                    if in_stringb var vl2 then
+                    match (occurs_var var t2) with
+                    (* match list_string_eqb vl2 (List.app vl1 [var]) with *)
+                    | true =>
                         (* 列形状为：(v1, v2, v3, var:th, val_col:bool )。
-                        行数也应该为n，select操作(要求t2为带v的表达式)对bag中逐元素迭代得到一个bool值，
-                        即对rel1中每行进行操作得到一行，所以行数应该相同 *)
+                        ！！行数也应该为n，select操作(要求t2为带v的表达式)对bag中逐元素迭代得到一个bool值，
+                        即对rel1中每行进行操作得到一行，所以行数应该相同。(！！！注意，目前没有此条件的硬性约束。)
+                        或者更严格的说，rel1中的val_col列对应的列表和rel2种var列对应的列表应该相同。 *)
                         (* t2为select操作的body表达式，其值为一个bool类型值，不是bag，因此Dimension Table为空*)
                         let cond := RBinop (B_Comp BEq) (RCol val_col) (RLit (Ira_Bool true)) in
-                        let vl1' := remove_string val_col vl1 in
-                        let projcols := List.app (proj_cols vl1') [mkProj val_col (RCol var)] in
+                        (* let vl1' := remove_string val_col vl1 in *)
+                        let projcols := List.app (proj_cols vl1) [mkProj val_col (RCol var)] in
                         Some (
                             Rel (RAProject projcols (RASelect cond rel2)),
-                            vl1',
-                            Te_Bag th,
+                            vl1,
+                            Te_Bag (Th_Object C),
                             dim_rel
                         )
-                    else None
+                    | false => None
+                    end
                 | _ => None
                 end
 
@@ -819,11 +906,5 @@ Fixpoint translate (M : object_model) (E : tran_env) (t : tm) : option (rex_or_r
     
 
 
-
-
-
-
-
-
-
+    | _ => None
     end.

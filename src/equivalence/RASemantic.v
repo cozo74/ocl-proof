@@ -490,20 +490,27 @@ Fixpoint insert_group_rows
           grp :: insert_group_rows gcols r rest
       | r0 :: _ =>
           if same_keyb gcols r r0
-          then (r :: grp) :: rest
+          then (List.app grp [r]) :: rest
           else grp :: insert_group_rows gcols r rest
       end
   end.
 
-(* 主分组函数 *)
-Fixpoint group_by_rows
+(* 主分组函数（稳定顺序） *)
+Fixpoint group_by_rows_acc
+  (gcols : list ColName)
+  (rows : list RowData)
+  (groups : list (list RowData))
+  : list (list RowData) :=
+  match rows with
+  | [] => groups
+  | r :: rs => group_by_rows_acc gcols rs (insert_group_rows gcols r groups)
+  end.
+
+Definition group_by_rows
   (gcols : list ColName)
   (rows : list RowData)
   : list (list RowData) :=
-  match rows with
-  | [] => []
-  | r :: rs => insert_group_rows gcols r (group_by_rows gcols rs)
-  end.
+  group_by_rows_acc gcols rows [].
 
 
 
@@ -1562,5 +1569,4 @@ Proof.
 
 
 Qed. *)
-
 

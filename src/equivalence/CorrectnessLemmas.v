@@ -377,7 +377,7 @@ Qed.
 
 
 
-Lemma class_row_has_oid :
+(* Lemma class_row_has_oid :
   forall M SS SC DB C ts rows r,
     EncSchemaW M SC ->
     EncDBW M SS SC DB ->
@@ -390,7 +390,7 @@ Lemma class_row_has_oid :
       In o os /\
       lookup_row oid_col r = Some (Ira_Object C o).
 Proof.
-Admitted.
+Admitted. *)
 
 
 
@@ -438,7 +438,7 @@ Proof.
   destruct HEncDB as [Hdb_cls _Hdb_assoc].
   specialize (Hdb_cls c ts rows HinC Htab Hdb).
   unfold ClassTableInst_ok in Hdb_cls.
-  destruct Hdb_cls as [_Hcover Hback].
+  destruct Hdb_cls as [_Hcover [Hback _Huniq]].
 
   (* 3) 用“反向性”把任意行 r ∈ rows 回溯到某个对象 o ∈ sigma_CLASS *)
   specialize (Hback r Hinr).
@@ -956,8 +956,207 @@ Qed.
 
 
 
+(* ---------- select body 的语法约束（逐行子语言） ---------- *)
+Fixpoint row_preserving_tm (t : tm) : bool :=
+  match t with
+  | CVar _ => true
+  | CLit _ => true
+  | CUnop _ t1 => row_preserving_tm t1
+  | CBinop _ t1 t2 => andb (row_preserving_tm t1) (row_preserving_tm t2)
+  | CAllInstances _ => false
+  | CAttr t1 _ => row_preserving_tm t1
+  | CRole t1 _ => row_preserving_tm t1
+  | CNRole _ _ => false
+  | CBagLiteral _ _ => false
+  | CUnion _ _ => false
+  | CDifference _ _ => false
+  | CAggregate _ _ => false
+  | CSelect _ _ _ => false
+  end.
+
+
+Definition row_preserving_body (var : string) (t : tm) : Prop :=
+  row_preserving_tm t = true /\ occurs_var var t = true.
+
+
+(* ---------- translation 环境良构不变量 ---------- *)
+Definition obj_rows_in_sigma
+  (M : object_model) (SS : system_state M)
+  (C : class_name) (rows : list RowData) : Prop :=
+  forall r o,
+    In r rows ->
+    lookup_row val_col r = Some (Ira_Object C o) ->
+    exists os, sigma_CLASS M SS C = Some os /\ In o os.
+
+
+Definition binding_wf
+  (M : object_model) (SS : system_state M)
+  (SC : Schema) (DB : DBInstance SC)
+  (b : rel * list var_name * T_h) : Prop :=
+  match b with
+  | (rel, _, Th_Object C) =>
+      exists rows,
+        evalRelF SC DB rel = Some rows /\
+        obj_rows_in_sigma M SS C rows
+  | (_, _, Th_Basic _) => True
+  end.
+
+
+Definition tran_env_wf
+  (M : object_model) (SS : system_state M)
+  (SC : Schema) (DB : DBInstance SC)
+  (E : tran_env) : Prop :=
+  forall x b, E x = Some b -> binding_wf M SS SC DB b.
+
+
+Lemma tran_env_wf_empty :
+  forall (M : object_model) (SS : system_state M)
+         (SC : Schema) (DB : DBInstance SC),
+    tran_env_wf M SS SC DB empty.
+Proof.
+  intros M SS SC DB x b H.
+  rewrite apply_empty in H.
+  discriminate.
+Qed.
+
+
+Lemma tran_env_wf_update :
+  forall (M : object_model) (SS : system_state M)
+         (SC : Schema) (DB : DBInstance SC)
+         (E : tran_env) (x : string) (b : rel * list var_name * T_h),
+    tran_env_wf M SS SC DB E ->
+    binding_wf M SS SC DB b ->
+    tran_env_wf M SS SC DB (update E x b).
+Proof.
+  intros M SS SC DB E x b Hwf Hb y b' Hy.
+  destruct (String.eqb y x) eqn:Heq.
+  - apply String.eqb_eq in Heq. subst y.
+    rewrite update_eq in Hy. inversion Hy; subst b'. exact Hb.
+  - apply String.eqb_neq in Heq.
+    assert (Hxy : x <> y).
+    { intros Hc. apply Heq. now symmetry. }
+    rewrite update_neq in Hy by exact Hxy.
+    eapply Hwf. exact Hy.
+Qed.
 
 
 
 
 
+
+
+
+
+Lemma cselect_body_row_shape_preservation_perm :
+  forall (M : object_model)
+         (SS : system_state M)
+         (SC : Schema) (DB : DBInstance SC)
+         (E : tran_env)
+         (tm_bag tm_with_var : tm) (var : string)
+         (rel0 rel1 dim_rel : rel)
+         (vl0 vl1 : list var_name)
+         (rows0 rows1 : list RowData)
+         (C : class_name),
+    EncDBW M SS SC DB ->
+    tran_env_wf M SS SC DB E ->
+    translate M E tm_bag = Some (Rel rel0, vl0, Te_Bag (Th_Object C), dim_rel) ->
+    translate M (update E var (rel0, vl0, Th_Object C)) tm_with_var
+      = Some (Rel rel1, vl1, Te_Single (Th_Basic Tb_Bool), RAEmpty) ->
+    occurs_var var tm_with_var = true ->
+    evalRelF SC DB rel0 = Some rows0 ->
+    evalRelF SC DB
+      (RAProject (proj_cols vl0 ++ [mkProj val_col (RCol var)]) rel1) = Some rows1 ->
+    Permutation rows0 rows1.
+Proof.
+Admitted.
+
+
+
+
+
+
+
+
+
+
+
+
+(* 若var对应的rel0的求值结果是None，则对于一个包含var的表达式tm_with_var，其翻译结果中对应的rel1中带有rel0子表达式，因此rel1的求值结果也是None *)
+Lemma translate_dep_none_propagates :
+  forall (M : object_model)
+         (SC : Schema) (DB : DBInstance SC)
+         (E : tran_env)
+         (var : string)
+         (tm_with_var : tm)
+         (rel0 rel1 : rel)
+         (vl0 vl1 : list var_name)
+         (C : class_name),
+    occurs_var var tm_with_var = true ->
+    evalRelF SC DB rel0 = None ->
+    translate M (update E var (rel0, vl0, Th_Object C)) tm_with_var
+      = Some (Rel rel1, vl1, Te_Single (Th_Basic Tb_Bool), RAEmpty) ->
+    evalRelF SC DB rel1 = None.
+Proof.
+Admitted.
+
+
+
+
+Lemma project_rowsF_in_fwd :
+  forall evalRex ps rows0 rows1 r0,
+    project_rowsF evalRex ps rows0 = Some rows1 ->
+    In r0 rows0 ->
+    exists r1, In r1 rows1 /\ project_rowF evalRex ps r0 = Some r1.
+Proof.
+Admitted.
+
+
+
+
+Lemma selectF_nil_no_true :
+  forall (M : object_model) (SS : system_state M)
+         (eval : env -> tm -> option I_e)
+         (E : env) (var : string) (body : tm) (Th : T_h)
+         (xs : list I_h),
+    selectF M SS eval E var body Th xs = Some [] ->
+    forall ih,
+      In ih xs ->
+      eval (update E var ih) body <>
+      Some (Ie_Single (Ih_Basic (Ib_Bool true))).
+Proof.
+Admitted.
+
+
+
+Lemma ra_row_false_to_ceval_not_true_self_local_occurs :
+  forall (M : object_model) (SS : system_state M)
+         (SC : Schema) (DB : DBInstance SC)
+         (C : class_name) (expr : tm) (E : env)
+         (ts : TableSchema)
+         (rel0 : rel) (vl0 : list var_name)
+         (rows0 : list RowData) (r0 : RowData) (o : oid),
+    (* 只用局部 schema/db 对齐条件 *)
+    lookup_table (sc_data SC) C = Some ts ->
+    (forall c ts rows,
+        In c (CLASS M) ->
+        lookup_table (sc_data SC) c = Some ts ->
+        db_data SC DB c = Some rows ->
+        ClassTableInst_ok M SS c rows) ->
+
+    In C (CLASS M) ->
+    translate M
+      (update empty "self"
+        (RAProject [mkProj val_col (RCol oid_col)] (RATable C), [], Th_Object C))
+      expr
+      = Some (Rel rel0, vl0, Te_Single (Th_Basic Tb_Bool), RAEmpty) ->
+    occurs_var "self" expr = true ->
+    evalRelF SC DB rel0 = Some rows0 ->
+    In r0 rows0 ->
+    lookup_row "self" r0 = Some (Ira_Object C o) ->
+    lookup_row val_col r0 = Some (Ira_Bool false) ->
+    cevalF M SS (update E "self" (Ih_Object C o)) (CUnop (U_Bool UNot) expr)
+      = Some (Ie_Single (Ih_Basic (Ib_Bool true))).
+
+
+Proof.
+Admitted.

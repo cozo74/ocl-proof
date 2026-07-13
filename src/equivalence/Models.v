@@ -437,6 +437,22 @@ Definition count_same_bar2 (links : list (oid * oid)) (l : oid * oid) : nat :=
 
 
 
+Definition count_links_from_c1 (links : list (oid * oid)) (o1 : oid) : nat :=
+  length (filter (fun l => String.eqb (fst l) o1) links).
+
+Definition count_links_from_c2 (links : list (oid * oid)) (o2 : oid) : nat :=
+  length (filter (fun l => String.eqb (snd l) o2) links).
+
+Definition targets_from_c1 (links : list (oid * oid)) (o1 : oid) : list oid :=
+  map snd (filter (fun l => String.eqb (fst l) o1) links).
+
+Definition targets_from_c2 (links : list (oid * oid)) (o2 : oid) : list oid :=
+  map fst (filter (fun l => String.eqb (snd l) o2) links).
+
+
+
+
+
 
 
 Record system_state (M : object_model) : Type := {
@@ -527,6 +543,39 @@ Record system_state (M : object_model) : Type := {
       sat_mult (m1 mp) (count_same_bar1 ls l) /\
       sat_mult (m2 mp) (count_same_bar2 ls l);
 
+
+
+  wf_multiplicity_totality :
+    forall asso ap mp ls,
+      associates M asso = Some ap ->
+      multiplicities M asso = Some mp ->
+      sigma_ASSOC asso = Some ls ->
+      (forall os1 o1,
+          sigma_CLASS (c1 ap) = Some os1 ->
+          In o1 os1 ->
+          sat_mult (m2 mp) (count_links_from_c1 ls o1))
+      /\
+      (forall os2 o2,
+          sigma_CLASS (c2 ap) = Some os2 ->
+          In o2 os2 ->
+          sat_mult (m1 mp) (count_links_from_c2 ls o2));
+
+  (*
+    nrole 导航（Many）时，固定源对象，得到的对向 oid 不重复。
+    - c1 --r2--> c2 对应 m2 = Many：targets_from_c1 去重
+    - c2 --r1--> c1 对应 m1 = Many：targets_from_c2 去重
+  *)
+  wf_nrole_targets_nodup :
+    forall asso ap mp ls,
+      associates M asso = Some ap ->
+      multiplicities M asso = Some mp ->
+      sigma_ASSOC asso = Some ls ->
+      (m2 mp = Many -> forall o1, NoDup (targets_from_c1 ls o1))
+      /\
+      (m1 mp = Many -> forall o2, NoDup (targets_from_c2 ls o2));
+
+
+
 }.
 
 
@@ -553,14 +602,12 @@ Definition navigate_role
 
             (* 情况 1：C 是 c1，role 应该等于 r2，目标在 snd *)
             if andb (String.eqb (c1 ap) C) (String.eqb (r2 rp) role) then
-              let targets :=
-                map snd (filter (fun l => String.eqb (fst l) o) ls) in
+              let targets := targets_from_c1 ls o in
               Some (c2 ap, targets)
 
             (* 情况 2：C 是 c2，role 应该等于 r1，目标在 fst *)
             else if andb (String.eqb (c2 ap) C) (String.eqb (r1 rp) role) then
-              let targets :=
-                map fst (filter (fun l => String.eqb (snd l) o) ls) in
+              let targets := targets_from_c2 ls o in
               Some (c1 ap, targets)
 
             else aux tl
@@ -1053,6 +1100,7 @@ Definition ClassObjectRow_ok
 类 c 的整张表实例，与 σ_CLASS(c) 对应：
 每个对象都对应一行
 每行都来自某个对象
+同一个 oid 在类表中至多出现一行
 行内容满足 ClassObjectRow_ok
 *)
 Definition ClassTableInst_ok
@@ -1073,7 +1121,15 @@ Definition ClassTableInst_ok
       exists o os,
         sigma_CLASS M SS c = Some os /\
         In o os /\
-        ClassObjectRow_ok M SS c o r).
+        ClassObjectRow_ok M SS c o r)
+  /\
+  (* 唯一性：同一个 oid 在类表中最多对应一行 *)
+  (forall o r1 r2,
+      In r1 rows ->
+      In r2 rows ->
+      lookup_row oid_col r1 = Some (Ira_Object c o) ->
+      lookup_row oid_col r2 = Some (Ira_Object c o) ->
+      r1 = r2).
       
 
 
@@ -1152,4 +1208,3 @@ Definition EncDBW
   (SC : Schema)
   (DB : DBInstance SC) : Prop :=
   EncDB M SS (sc_data SC) ( db_data SC DB).
-

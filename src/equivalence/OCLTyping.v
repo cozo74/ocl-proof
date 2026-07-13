@@ -294,7 +294,7 @@ Inductive has_type : context -> object_model -> tm -> T_e -> Prop :=
 
 
     (*  Bag type 有参operation： Bag 集合运算  *)
-    | T_Union :
+    (* | T_Union :
         forall Gamma M t1 t2 T,
             has_type Gamma M t1 (Te_Bag T) ->
             has_type Gamma M t2 (Te_Bag T) ->
@@ -305,7 +305,7 @@ Inductive has_type : context -> object_model -> tm -> T_e -> Prop :=
         forall Gamma M t1 t2 T,
             has_type Gamma M t1 (Te_Bag T) ->
             has_type Gamma M t2 (Te_Bag T) ->
-            has_type Gamma M (CDifference t1 t2) (Te_Bag T)
+            has_type Gamma M (CDifference t1 t2) (Te_Bag T) *)
 
 
 
@@ -324,10 +324,10 @@ Inductive has_type : context -> object_model -> tm -> T_e -> Prop :=
 
 
     | T_Select :
-        forall Gamma M t x T body,
-            has_type Gamma M t (Te_Bag T) ->
-            has_type (update Gamma x T) M body (Te_Single (Th_Basic Tb_Bool)) ->
-            has_type Gamma M (CSelect t x body) (Te_Bag T)
+        forall Gamma M t x cn body,
+            has_type Gamma M t (Te_Bag (Th_Object cn)) ->
+            has_type (update Gamma x (Th_Object cn)) M body (Te_Single (Th_Basic Tb_Bool)) ->
+            has_type Gamma M (CSelect t x body) (Te_Bag (Th_Object cn))
     
 
 
